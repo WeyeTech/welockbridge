@@ -1,3 +1,10 @@
+// build.gradle.kts (module: welockbridge)
+
+import org.gradle.api.JavaVersion
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+import org.gradle.api.publish.PublishingExtension
+import org.gradle.api.publish.maven.MavenPublication
+
 buildscript {
   repositories {
     google()
@@ -18,10 +25,20 @@ repositories {
   mavenCentral()
 }
 
-// SDK Version Configuration
+// ============================================================================
+// SDK Version Configuration  (JitPack coordinates)
+// ============================================================================
+
 val sdkVersion = "1.0.0"
-val sdkGroupId = "com.welockbridge"
-val sdkArtifactId = "sdk"
+val sdkGroupId = "com.github.WeyeTech"
+val sdkArtifactId = "welockbridge"
+
+group = sdkGroupId
+version = sdkVersion
+
+// ============================================================================
+// ANDROID LIBRARY CONFIG
+// ============================================================================
 
 configure<com.android.build.gradle.LibraryExtension> {
   namespace = "com.welockbridge.sdk"
@@ -29,20 +46,19 @@ configure<com.android.build.gradle.LibraryExtension> {
   
   defaultConfig {
     minSdk = 24
-    
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     consumerProguardFiles("consumer-rules.pro")
   }
   
   buildTypes {
-    release {
+    getByName("release") {
       isMinifyEnabled = true
       proguardFiles(
         getDefaultProguardFile("proguard-android-optimize.txt"),
         "proguard-rules.pro"
       )
     }
-    debug {
+    getByName("debug") {
       isMinifyEnabled = false
     }
   }
@@ -65,13 +81,18 @@ configure<com.android.build.gradle.LibraryExtension> {
 }
 
 // Configure Kotlin options
-tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+tasks.withType<KotlinCompile>().configureEach {
   kotlinOptions {
     jvmTarget = "11"
   }
 }
 
+// ============================================================================
+// DEPENDENCIES
+// ============================================================================
+
 dependencies {
+  // Kotlin
   add("implementation", "org.jetbrains.kotlin:kotlin-stdlib:1.9.20")
   add("implementation", "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
   add("implementation", "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
@@ -105,7 +126,7 @@ afterEvaluate {
         pom {
           name.set("WeLockBridge BLE SDK")
           description.set("Professional BLE SDK for G-Series digital locks")
-          url.set("https://github.com/welockbridge/sdk")
+          url.set("https://github.com/WeyeTech/welockbridge") // 🔴 CHANGED
         }
       }
     }
@@ -114,11 +135,11 @@ afterEvaluate {
       // Publish to local Maven for testing
       mavenLocal()
       
-      // GitHub Packages - uncomment and set environment variables
+      // GitHub Packages - keep commented for now
       /*
       maven {
           name = "GitHubPackages"
-          url = uri("https://maven.pkg.github.com/YOUR_USERNAME/welockbridge-sdk")
+          url = uri("https://maven.pkg.github.com/WeyeTech/welockbridge")
           credentials {
               username = System.getenv("GITHUB_USERNAME") ?: ""
               password = System.getenv("GITHUB_TOKEN") ?: ""
