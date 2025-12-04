@@ -437,7 +437,7 @@ internal class TTSeriesDigitalLock(
     /**
      * Calibrate the lock's time.
      */
-    suspend fun calibrateTime(): Result<Unit> {
+    override suspend fun calibrateTime(): Result<Unit> {
         Log.d(TAG, "Calibrating time...")
 
         if (!isConnected()) {
@@ -468,7 +468,7 @@ internal class TTSeriesDigitalLock(
     /**
      * Get the lock's firmware version.
      */
-    suspend fun getVersion(): Result<String> {
+    override suspend fun getVersion(): Result<String> {
         Log.d(TAG, "Getting version...")
 
         if (!isConnected()) {
@@ -497,7 +497,7 @@ internal class TTSeriesDigitalLock(
      *
      * @param sleepMode true for sleep mode (lower power), false for real-time mode
      */
-    suspend fun setWorkMode(sleepMode: Boolean): Result<Unit> {
+    override suspend fun setWorkMode(sleepMode: Boolean): Result<Unit> {
         Log.d(TAG, "Setting work mode: ${if (sleepMode) "SLEEP" else "REALTIME"}")
 
         if (!isConnected()) {
@@ -529,14 +529,14 @@ internal class TTSeriesDigitalLock(
     /**
      * Get the lock ID as a string.
      */
-    fun getLockIdString(): String? {
+    override fun getLockIdString(): String? {
         return detectedLockId?.let { TTSeriesProtocol.lockIdToString(it) }
     }
 
     /**
      * Get battery level.
      */
-    fun getBatteryLevel(): Int = batteryLevel
+    override fun getBatteryLevel(): Int = batteryLevel
 
     /**
      * Update lock state with caching.
