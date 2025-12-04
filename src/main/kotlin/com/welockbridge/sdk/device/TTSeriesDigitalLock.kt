@@ -100,12 +100,16 @@ internal class TTSeriesDigitalLock(
   /**
    * Password for TT protocol (6 bytes)
    *
-   * According to protocol doc, the password is encoded as hex bytes where
-   * each pair of digits becomes one byte:
-   * - "112233" → 0x11 0x22 0x33 0x00 0x00 0x00
-   * - "112233445566" → 0x11 0x22 0x33 0x44 0x55 0x66
+   * According to protocol doc Attachment 1:
+   * "Key | Operation password | 6 digit ASCII code number for the password keyboard elock | 6B"
    *
-   * If password has odd number of digits, it's padded with leading zero.
+   * This means the password is sent as ASCII characters:
+   * - "123456" → 0x31 0x32 0x33 0x34 0x35 0x36 (ASCII codes for '1','2','3','4','5','6')
+   * - "112233" → 0x31 0x31 0x32 0x32 0x33 0x33
+   *
+   * The example in the doc (112233445566) shows the HEX representation of bytes,
+   * which would correspond to a non-printable password. Real keyboard passwords
+   * are ASCII digits.
    */
   private val password: ByteArray
     get() {
@@ -114,33 +118,23 @@ internal class TTSeriesDigitalLock(
     }
   
   /**
-   * Convert password string to 6-byte array using hex encoding.
-   * Each pair of digits becomes one byte.
+   * Convert password string to 6-byte array.
+   *
+   * Password encoding (per protocol doc):
+   * - 6 ASCII digit characters, each sent as its ASCII code
+   * - "123456" → [0x31, 0x32, 0x33, 0x34, 0x35, 0x36]
+   *
+   * If password is longer than 6 chars, only first 6 are used.
+   * If shorter, it's padded with '0' (0x30).
    */
   private fun convertPasswordToBytes(password: String): ByteArray {
-    val result = ByteArray(6)
+    // Take first 6 characters, pad with '0' if needed
+    val paddedPwd = password.take(6).padEnd(6, '0')
     
-    // Pad password to even length with leading zero if needed
-    val paddedPwd = if (password.length % 2 == 1) "0$password" else password
+    // Convert to ASCII bytes
+    val result = paddedPwd.toByteArray(Charsets.US_ASCII)
     
-    // Pad to 12 chars to fill 6 bytes
-    val fullPwd = paddedPwd.padEnd(12, '0')
-    
-    // Convert each pair of digits to a byte
-    for (i in 0 until 6) {
-      val startIndex = i * 2
-      if (startIndex < fullPwd.length) {
-        val pair = fullPwd.substring(startIndex, minOf(startIndex + 2, fullPwd.length))
-        try {
-          result[i] = pair.toInt(16).toByte()
-        } catch (e: NumberFormatException) {
-          // If not valid hex, use as ASCII digits
-          result[i] = (pair.getOrNull(0)?.digitToIntOrNull() ?: 0).toByte()
-        }
-      }
-    }
-    
-    Log.d(TAG, "Password '$password' encoded as: ${result.joinToString(" ") { "%02X".format(it) }}")
+    Log.d(TAG, "Password '$password' encoded as ASCII: ${result.joinToString(" ") { "%02X".format(it) }}")
     return result
   }
   

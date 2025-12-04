@@ -256,9 +256,8 @@ data class DeviceCredentials private constructor(
      * Create credentials for TT-Series lock.
      *
      * @param lockId 8-digit lock ID string (e.g., "83181001")
-     * @param password 6 or 12 digit password string. Format:
-     *                 - 6 digits: "112233" → encoded as 0x11 0x22 0x33 0x00 0x00 0x00
-     *                 - 12 digits: "112233445566" → encoded as 0x11 0x22 0x33 0x44 0x55 0x66
+     * @param password 6-digit password string (ASCII digits like "123456")
+     *                 Each digit is sent as its ASCII code to the lock.
      * @param encryptionKey Optional 16-byte AES key for encrypted mode
      */
     fun forTTSeries(
@@ -271,15 +270,10 @@ data class DeviceCredentials private constructor(
           IllegalArgumentException("Lock ID must be exactly 8 digits")
         )
       }
-      // Allow 6 or 12 digit passwords (hex-encoded to 3 or 6 bytes)
-      if (!password.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }) {
+      // Password: 1-6 digit characters (will be padded with '0' if shorter)
+      if (password.isEmpty() || password.length > 6) {
         return Result.failure(
-          IllegalArgumentException("Password must contain only hex digits (0-9, A-F)")
-        )
-      }
-      if (password.length !in 1..12) {
-        return Result.failure(
-          IllegalArgumentException("Password must be 1-12 hex digits")
+          IllegalArgumentException("Password must be 1-6 characters")
         )
       }
       if (encryptionKey != null && encryptionKey.size != 16) {
@@ -302,22 +296,17 @@ data class DeviceCredentials private constructor(
      * Create credentials for TT-Series lock with default (zero) lock ID.
      * Lock ID will be auto-detected from device responses.
      *
-     * @param password 6 or 12 digit password string
+     * @param password 6-digit password string (ASCII digits like "123456")
      * @param encryptionKey Optional 16-byte AES key for encrypted mode
      */
     fun forTTSeriesAutoDetect(
       password: String,
       encryptionKey: ByteArray? = null
     ): Result<DeviceCredentials> {
-      // Allow 6 or 12 digit passwords
-      if (!password.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }) {
+      // Password: 1-6 digit characters
+      if (password.isEmpty() || password.length > 6) {
         return Result.failure(
-          IllegalArgumentException("Password must contain only hex digits (0-9, A-F)")
-        )
-      }
-      if (password.length !in 1..12) {
-        return Result.failure(
-          IllegalArgumentException("Password must be 1-12 hex digits")
+          IllegalArgumentException("Password must be 1-6 characters")
         )
       }
       if (encryptionKey != null && encryptionKey.size != 16) {
@@ -357,7 +346,7 @@ data class DeviceCredentials private constructor(
     fun withDefaultTTSeriesKey(): DeviceCredentials {
       return DeviceCredentials(
         encryptionKey = null,
-        password = "112233445566", // Default TT password (12 hex digits = 6 bytes)
+        password = "123456", // Default 6-digit ASCII password
         lockId = "00000000",
         protocol = LockProtocol.TT_SERIES,
         timestamp = System.currentTimeMillis()
