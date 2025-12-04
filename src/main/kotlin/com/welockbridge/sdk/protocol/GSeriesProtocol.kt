@@ -182,30 +182,46 @@ internal object GSeriesProtocol {
   
   /**
    * Parse a response frame from the device.
+   * Now supports both Bander protocol AND raw responses from other locks.
    */
   fun parseResponse(data: ByteArray, encryptionKey: ByteArray? = null): ParsedResponse? {
-    Log.d(TAG, "Parsing response: ${data.toHexString()}")
+    val hex = data.joinToString(" ") { String.format("%02X", it) }
+    Log.d(TAG, "╔══════════════════════════════════════════════════════╗")
+    Log.d(TAG, "║ 🔍 PARSING RESPONSE                                  ║")
+    Log.d(TAG, "╠══════════════════════════════════════════════════════╣")
+    Log.d(TAG, "║ Size: ${data.size} bytes")
+    Log.d(TAG, "║ Hex: $hex")
+    Log.d(TAG, "╚══════════════════════════════════════════════════════╝")
     
-    // Find frame boundaries
+    if (data.isEmpty()) {
+      Log.w(TAG, "Empty response")
+      return null
+    }
+    
+    // Try Bander protocol first (F3 3F ... F4 4F format)
     val startIndex = findFrameStart(data)
-    if (startIndex < 0) {
-      Log.w(TAG, "No valid frame header found")
-      return null
+    val endIndex = if (startIndex >= 0) findFrameEnd(data, startIndex) else -1
+    
+    if (startIndex >= 0 && endIndex >= 0) {
+      Log.d(TAG, "✅ Bander protocol frame detected")
+      return parseBanderFrame(data, startIndex, endIndex, encryptionKey)
     }
     
-    val endIndex = findFrameEnd(data, startIndex)
-    if (endIndex < 0) {
-      Log.w(TAG, "No valid frame tail found")
-      return null
-    }
-    
+    // Not Bander protocol - treat as raw response
+    Log.d(TAG, "⚠️ Not Bander protocol - parsing as RAW response")
+    return parseRawResponse(data)
+  }
+  
+  /**
+   * Parse Bander protocol frame (original format)
+   */
+  private fun parseBanderFrame(data: ByteArray, startIndex: Int, endIndex: Int, encryptionKey: ByteArray?): ParsedResponse? {
     val frame = data.copyOfRange(startIndex, endIndex + 2)
     if (frame.size < 11) {
       Log.w(TAG, "Frame too short: ${frame.size}")
       return null
     }
     
-    // Parse frame structure
     val isEncrypted = frame[2] == ENCRYPTED_BYTE1 && frame[3] == ENCRYPTED_BYTE2
     val command = ((frame[4].toInt() and 0xFF) shl 8) or (frame[5].toInt() and 0xFF)
     val length = ((frame[6].toInt() and 0xFF) shl 8) or (frame[7].toInt() and 0xFF)
@@ -220,7 +236,6 @@ internal object GSeriesProtocol {
     val content = if (isEncrypted && encryptionKey != null) {
       try {
         val decrypted = decryptAES(encryptedContent, encryptionKey)
-        // Skip CRC(2) + Serial(6) + Random(2) = 10 bytes
         if (decrypted.size > 10) {
           decrypted.copyOfRange(10, decrypted.size)
         } else {
@@ -234,7 +249,6 @@ internal object GSeriesProtocol {
       encryptedContent
     }
     
-    // Extract result code
     val resultCode = if (content.isNotEmpty()) content[0].toInt() and 0xFF else -1
     
     return ParsedResponse(
@@ -246,30 +260,129 @@ internal object GSeriesProtocol {
   }
   
   /**
+   * Parse raw response from non-Bander locks (Nordic UART, etc.)
+   * Attempts to extract useful information from any response format.
+   */
+  private fun parseRawResponse(data: ByteArray): ParsedResponse {
+    Log.d(TAG, "📝 Analyzing raw response...")
+    
+    // Log first few bytes for analysis
+    if (data.isNotEmpty()) {
+      Log.d(TAG, "   First byte: ${String.format("0x%02X", data[0])} = ${data[0].toInt() and 0xFF}")
+    }
+    if (data.size >= 2) {
+      Log.d(TAG, "   Second byte: ${String.format("0x%02X", data[1])} = ${data[1].toInt() and 0xFF}")
+    }
+    
+    // Try to detect common response patterns
+    val firstByte = if (data.isNotEmpty()) data[0].toInt() and 0xFF else 0
+    
+    // Many locks use first byte as status: 0x00 = success, 0x01 = locked, etc.
+    val isSuccess = firstByte == 0x00 || firstByte == 0x01
+    
+    // Try to find lock state (common patterns)
+    var lockState: Byte? = null
+    var batteryLevel: Int? = null
+    
+    // Pattern 1: Status byte followed by lock state
+    if (data.size >= 2) {
+      // Some locks: [status] [lock_state] where lock_state: 0=unlocked, 1=locked
+      if (data[1] == 0x00.toByte() || data[1] == 0x01.toByte()) {
+        lockState = data[1]
+        Log.d(TAG, "   Possible lock state at byte[1]: ${if (lockState == 0x01.toByte()) "LOCKED" else "UNLOCKED"}")
+      }
+    }
+    
+    // Pattern 2: Look for battery percentage (value 0-100)
+    for (i in data.indices) {
+      val value = data[i].toInt() and 0xFF
+      if (value in 1..100) {
+        batteryLevel = value
+        Log.d(TAG, "   Possible battery at byte[$i]: $value%")
+        break
+      }
+    }
+    
+    Log.d(TAG, "   Interpretation: success=$isSuccess")
+    
+    return ParsedResponse(
+      command = 0,
+      resultCode = firstByte,
+      content = data,
+      isSuccess = isSuccess
+    )
+  }
+  
+  /**
    * Extract lock state from response content.
+   * Supports both Bander protocol and raw responses.
    */
   fun extractLockState(content: ByteArray): Boolean? {
+    if (content.isEmpty()) return null
+    
+    // Bander protocol: look for PARAM_LOCK_STATE marker
     var i = 0
     while (i < content.size - 1) {
       if (content[i] == PARAM_LOCK_STATE) {
-        return content[i + 1] == LOCK_STATE_LOCKED
+        val state = content[i + 1] == LOCK_STATE_LOCKED
+        Log.d(TAG, "Lock state (Bander): ${if (state) "LOCKED" else "UNLOCKED"}")
+        return state
       }
       i++
     }
+    
+    // Raw response: try common patterns
+    // Pattern 1: First byte is status (0=success), second byte is lock state
+    if (content.size >= 2) {
+      val secondByte = content[1].toInt() and 0xFF
+      if (secondByte == 0 || secondByte == 1) {
+        val state = secondByte == 1
+        Log.d(TAG, "Lock state (raw pattern 1): ${if (state) "LOCKED" else "UNLOCKED"}")
+        return state
+      }
+    }
+    
+    // Pattern 2: First byte is lock state directly
+    if (content.size >= 1) {
+      val firstByte = content[0].toInt() and 0xFF
+      if (firstByte == 0 || firstByte == 1) {
+        val state = firstByte == 1
+        Log.d(TAG, "Lock state (raw pattern 2): ${if (state) "LOCKED" else "UNLOCKED"}")
+        return state
+      }
+    }
+    
+    Log.d(TAG, "Could not extract lock state from response")
     return null
   }
   
   /**
    * Extract battery level from response content.
+   * Supports both Bander protocol and raw responses.
    */
   fun extractBatteryLevel(content: ByteArray): Int? {
+    if (content.isEmpty()) return null
+    
+    // Bander protocol: look for PARAM_BATTERY marker
     var i = 0
     while (i < content.size - 1) {
       if (content[i] == PARAM_BATTERY) {
-        return content[i + 1].toInt() and 0xFF
+        val level = content[i + 1].toInt() and 0xFF
+        Log.d(TAG, "Battery (Bander): $level%")
+        return level
       }
       i++
     }
+    
+    // Raw response: look for reasonable battery value (1-100)
+    for (j in content.indices) {
+      val value = content[j].toInt() and 0xFF
+      if (value in 1..100) {
+        Log.d(TAG, "Battery (raw at byte[$j]): $value%")
+        return value
+      }
+    }
+    
     return null
   }
   

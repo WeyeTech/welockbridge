@@ -69,7 +69,7 @@ internal class BleConnectionManager(
       Log.d(TAG, "Connection state changed: status=$status, newState=$newState")
       when (newState) {
         BluetoothProfile.STATE_CONNECTED -> {
-          Log.d(TAG, "Connected to GATT server")
+          Log.d(TAG, "✅ Connected to GATT server")
           bluetoothGatt = gatt
           // Small delay before service discovery
           android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
@@ -79,7 +79,7 @@ internal class BleConnectionManager(
           onConnectionStateChange?.invoke(true, null)
         }
         BluetoothProfile.STATE_DISCONNECTED -> {
-          Log.d(TAG, "Disconnected from GATT server")
+          Log.d(TAG, "❌ Disconnected from GATT server")
           onConnectionStateChange?.invoke(false, "Disconnected (status: $status)")
           connectionDeferred?.complete(Result.failure(Exception("Connection lost")))
         }
@@ -103,10 +103,10 @@ internal class BleConnectionManager(
       status: Int
     ) {
       val result = if (status == BluetoothGatt.GATT_SUCCESS) {
-        Log.d(TAG, "Write completed successfully to ${characteristic?.uuid}")
+        Log.d(TAG, "✅ Write completed successfully to ${characteristic?.uuid}")
         Result.success(Unit)
       } else {
-        Log.e(TAG, " Write failed with status: $status")
+        Log.e(TAG, "❌ Write failed with status: $status")
         Result.failure(Exception("Write failed with status: $status"))
       }
       writeCompletionDeferred?.complete(result)
@@ -118,10 +118,10 @@ internal class BleConnectionManager(
       status: Int
     ) {
       val result = if (status == BluetoothGatt.GATT_SUCCESS) {
-        Log.d(TAG, "Descriptor write completed - notifications enabled")
+        Log.d(TAG, "✅ Descriptor write completed - notifications enabled")
         Result.success(Unit)
       } else {
-        Log.e(TAG, "Descriptor write failed with status: $status")
+        Log.e(TAG, "❌ Descriptor write failed with status: $status")
         Result.failure(Exception("Descriptor write failed: $status"))
       }
       descriptorWriteDeferred?.complete(result)
@@ -132,7 +132,7 @@ internal class BleConnectionManager(
       characteristic: BluetoothGattCharacteristic,
       value: ByteArray
     ) {
-      Log.d(TAG, "Received (API 33+): ${value.size} bytes - ${value.toHexString()}")
+      Log.d(TAG, "📥 Received (API 33+): ${value.size} bytes - ${value.toHexString()}")
       _dataReceived.tryEmit(value)
     }
     
@@ -142,7 +142,7 @@ internal class BleConnectionManager(
       characteristic: BluetoothGattCharacteristic?
     ) {
       characteristic?.value?.let { value ->
-        Log.d(TAG, "Received (Legacy): ${value.size} bytes - ${value.toHexString()}")
+        Log.d(TAG, "📥 Received (Legacy): ${value.size} bytes - ${value.toHexString()}")
         _dataReceived.tryEmit(value)
       }
     }
@@ -156,7 +156,7 @@ internal class BleConnectionManager(
     gatt ?: return
     Log.d(TAG, "========== ALL DISCOVERED SERVICES ==========")
     for (service in gatt.services) {
-      Log.d(TAG, "Service: ${service.uuid}")
+      Log.d(TAG, "📦 Service: ${service.uuid}")
       for (char in service.characteristics) {
         val props = char.properties
         val propsStr = buildString {
@@ -180,7 +180,7 @@ internal class BleConnectionManager(
     gatt ?: return
     
     Log.d(TAG, "")
-    Log.d(TAG, "AUTO-DISCOVERING CHARACTERISTICS (LIKE NRF CONNECT)")
+    Log.d(TAG, "🔍 AUTO-DISCOVERING CHARACTERISTICS (LIKE NRF CONNECT)")
     Log.d(TAG, "   No hardcoded UUIDs - finding dynamically...")
     Log.d(TAG, "")
     
@@ -218,18 +218,18 @@ internal class BleConnectionManager(
       // Skip standard BLE services
       val isStandard = standardServicePrefixes.any { svcUuid.startsWith(it) }
       if (isStandard) {
-        Log.d(TAG, " Skip standard: ${service.uuid}")
+        Log.d(TAG, "   ⏭️ Skip standard: ${service.uuid}")
         continue
       }
       
       // Skip DFU services - they're for firmware updates, not data!
       val isDfu = dfuServicePrefixes.any { svcUuid.startsWith(it) }
       if (isDfu) {
-        Log.d(TAG, "Skip DFU service: ${service.uuid}")
+        Log.d(TAG, "   ⏭️ Skip DFU service: ${service.uuid}")
         continue
       }
       
-      Log.d(TAG, " Service: ${service.uuid}")
+      Log.d(TAG, "   📦 Service: ${service.uuid}")
       
       var writeChar: BluetoothGattCharacteristic? = null
       var notifyChar: BluetoothGattCharacteristic? = null
@@ -281,11 +281,11 @@ internal class BleConnectionManager(
         // BIG bonus for Nordic UART Service (NUS) - most common data service
         if (svcUuid.startsWith("6e400001")) {
           score += 100
-          Log.d(TAG, "Nordic UART Service detected! +100 score")
+          Log.d(TAG, "      🎯 Nordic UART Service detected! +100 score")
         }
         
         candidates.add(ServiceCandidate(service, writeChar, notifyChar, score))
-        Log.d(TAG, "CANDIDATE score=$score")
+        Log.d(TAG, "      ✅ CANDIDATE score=$score")
       }
     }
     
@@ -302,7 +302,7 @@ internal class BleConnectionManager(
       
       Log.d(TAG, "")
       Log.d(TAG, "╔══════════════════════════════════════════════════════╗")
-      Log.d(TAG, "║AUTO-DISCOVERED (NO HARDCODING)                   ║")
+      Log.d(TAG, "║ ✅ AUTO-DISCOVERED (NO HARDCODING)                   ║")
       Log.d(TAG, "╠══════════════════════════════════════════════════════╣")
       Log.d(TAG, "║ Service: ${best.service.uuid}")
       Log.d(TAG, "║ RX (Write): ${best.writeChar.uuid}")
@@ -311,7 +311,7 @@ internal class BleConnectionManager(
       Log.d(TAG, "")
     } else {
       Log.e(TAG, "")
-      Log.e(TAG, "NO SERVICE WITH WRITE+NOTIFY FOUND!")
+      Log.e(TAG, "❌ NO SERVICE WITH WRITE+NOTIFY FOUND!")
       Log.e(TAG, "")
     }
   }
@@ -488,19 +488,19 @@ internal class BleConnectionManager(
     // Enable local notification
     val success = gatt.setCharacteristicNotification(characteristic, true)
     if (!success) {
-      Log.e(TAG, "setCharacteristicNotification failed")
+      Log.e(TAG, "❌ setCharacteristicNotification failed")
       return Result.failure(Exception("Failed to enable local notifications"))
     }
-    Log.d(TAG, "Local notification enabled")
+    Log.d(TAG, "✅ Local notification enabled")
     
     // Write to CCCD descriptor
     val descriptor = characteristic.getDescriptor(UUID.fromString(CCCD_UUID))
     if (descriptor == null) {
-      Log.w(TAG, "No CCCD descriptor found, notifications may not work")
+      Log.w(TAG, "⚠️ No CCCD descriptor found, notifications may not work")
       return Result.success(Unit)
     }
     
-    Log.d(TAG, "Writing to CCCD descriptor...")
+    Log.d(TAG, "📝 Writing to CCCD descriptor...")
     descriptorWriteDeferred = CompletableDeferred()
     
     val writeSuccess = try {
@@ -514,14 +514,14 @@ internal class BleConnectionManager(
         gatt.writeDescriptor(descriptor)
       }
     } catch (e: Exception) {
-      Log.e(TAG, "Descriptor write error: ${e.message}")
+      Log.e(TAG, "❌ Descriptor write error: ${e.message}")
       descriptorWriteDeferred = null
       return Result.failure(e)
     }
     
     if (!writeSuccess) {
       descriptorWriteDeferred = null
-      Log.e(TAG, " Descriptor write initiation failed")
+      Log.e(TAG, "❌ Descriptor write initiation failed")
       return Result.failure(Exception("Descriptor write failed"))
     }
     
@@ -531,7 +531,7 @@ internal class BleConnectionManager(
         descriptorWriteDeferred?.await() ?: Result.failure(Exception("Descriptor write cancelled"))
       }
     } catch (e: Exception) {
-      Log.e(TAG, " Descriptor write timeout")
+      Log.e(TAG, "❌ Descriptor write timeout")
       descriptorWriteDeferred = null
       Result.failure(Exception("Descriptor write timeout"))
     }
