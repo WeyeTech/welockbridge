@@ -11,7 +11,7 @@ buildscript {
     mavenCentral()
   }
   dependencies {
-    classpath("com.android.tools.build:gradle:8.13.1")
+    classpath("com.android.tools.build:gradle:8.7.3")
     classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.20")
   }
 }
@@ -29,7 +29,7 @@ repositories {
 // SDK Version Configuration  (JitPack coordinates)
 // ============================================================================
 
-val sdkVersion = "1.1.8"
+val sdkVersion = "1.1.9"
 val sdkGroupId = "com.github.WeyeTech"
 val sdkArtifactId = "welockbridge"
 
@@ -64,8 +64,8 @@ configure<com.android.build.gradle.LibraryExtension> {
   }
   
   compileOptions {
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
   }
   
   buildFeatures {
@@ -83,7 +83,7 @@ configure<com.android.build.gradle.LibraryExtension> {
 // Configure Kotlin options
 tasks.withType<KotlinCompile>().configureEach {
   kotlinOptions {
-    jvmTarget = "11"
+    jvmTarget = "17"
   }
 }
 
