@@ -14,6 +14,7 @@ import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.welockbridge.sdk.core.DeviceType
+import com.welockbridge.sdk.core.LockProtocol
 import com.welockbridge.sdk.core.ScannedDevice
 import com.welockbridge.sdk.core.SdkConfig
 import com.welockbridge.sdk.core.SdkException
@@ -26,6 +27,8 @@ import java.util.UUID
  * Scans for compatible BLE devices and identifies their type.
  * All identification patterns are configurable via SdkConfig.
  * NO HARDCODED VALUES - fully configurable.
+ *
+ * UPDATED: Added TT-Series protocol detection
  */
 internal class BleDeviceScanner(
   private val context: Context,
@@ -34,6 +37,43 @@ internal class BleDeviceScanner(
   
   companion object {
     private const val TAG = "WeLockBridge.Scanner"
+    
+    /**
+     * TT-Series Lock ID pattern: exactly 8 digits
+     * Example: "25390069", "83181001"
+     */
+    private val TT_SERIES_NAME_PATTERN = Regex("^\\d{8}$")
+    
+    /**
+     * Detect protocol from device name.
+     * TT-Series locks advertise their 8-digit Lock ID as the device name.
+     */
+    fun detectProtocolFromName(name: String?): LockProtocol {
+      if (name == null) return LockProtocol.AUTO_DETECT
+      
+      // TT-Series: 8-digit numeric name (this IS the Lock ID)
+      if (TT_SERIES_NAME_PATTERN.matches(name)) {
+        return LockProtocol.TT_SERIES
+      }
+      
+      // G-Series patterns (common prefixes)
+      val lowerName = name.lowercase()
+      if (lowerName.startsWith("g4-") ||
+        lowerName.startsWith("g-lock") ||
+        lowerName.startsWith("gseries") ||
+        lowerName.contains("imz")) {
+        return LockProtocol.G_SERIES
+      }
+      
+      return LockProtocol.AUTO_DETECT
+    }
+    
+    /**
+     * Check if device name looks like a TT-Series Lock ID.
+     */
+    fun isTTSeriesLockId(name: String?): Boolean {
+      return name != null && TT_SERIES_NAME_PATTERN.matches(name)
+    }
   }
   
   private val bluetoothManager: BluetoothManager? =
@@ -249,7 +289,11 @@ internal class BleDeviceScanner(
     
     @Suppress("MissingPermission")
     val name = device.name
-    Log.d(TAG, "Scanned: $address, name=$name, rssi=$rssi, type=$deviceType")
+    
+    // Detect protocol from device name
+    val detectedProtocol = detectProtocolFromName(name)
+    
+    Log.d(TAG, "Scanned: $address, name=$name, rssi=$rssi, type=$deviceType, protocol=$detectedProtocol")
     
     // Apply filter
     val shouldInclude = when {
@@ -258,21 +302,31 @@ internal class BleDeviceScanner(
       deviceType == DeviceType.UNKNOWN && config.autoIdentifyUnknown -> {
         mightBeLock(result)
       }
+      // Also include if we detected a specific protocol (TT-Series or G-Series)
+      detectedProtocol != LockProtocol.AUTO_DETECT -> true
       else -> false
     }
     
     if (!shouldInclude) return
     
+    // If we detected a protocol, mark as DIGITAL_LOCK
+    val finalDeviceType = if (detectedProtocol != LockProtocol.AUTO_DETECT && deviceType == DeviceType.UNKNOWN) {
+      DeviceType.DIGITAL_LOCK
+    } else {
+      deviceType
+    }
+    
     val scannedDevice = ScannedDevice(
       address = address,
       name = name,
       rssi = rssi,
-      deviceType = deviceType,
-      advertisementData = result.scanRecord?.bytes
+      deviceType = finalDeviceType,
+      advertisementData = result.scanRecord?.bytes,
+      detectedProtocol = detectedProtocol
     )
     
     discoveredDevices[address] = scannedDevice
-    Log.d(TAG, "Found device: $address, name=$name, rssi=$rssi, type=$deviceType")
+    Log.d(TAG, "Found device: $address, name=$name, rssi=$rssi, type=$finalDeviceType, protocol=$detectedProtocol")
     onDeviceFound(discoveredDevices.values.toList())
   }
   

@@ -29,7 +29,7 @@ repositories {
 // SDK Version Configuration  (JitPack coordinates)
 // ============================================================================
 
-val sdkVersion = "1.2.1"
+val sdkVersion = "1.2.2"
 val sdkGroupId = "com.github.WeyeTech"
 val sdkArtifactId = "welockbridge"
 
