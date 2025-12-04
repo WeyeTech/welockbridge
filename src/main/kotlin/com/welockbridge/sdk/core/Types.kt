@@ -256,7 +256,9 @@ data class DeviceCredentials private constructor(
      * Create credentials for TT-Series lock.
      *
      * @param lockId 8-digit lock ID string (e.g., "83181001")
-     * @param password 6-digit password string
+     * @param password 6 or 12 digit password string. Format:
+     *                 - 6 digits: "112233" → encoded as 0x11 0x22 0x33 0x00 0x00 0x00
+     *                 - 12 digits: "112233445566" → encoded as 0x11 0x22 0x33 0x44 0x55 0x66
      * @param encryptionKey Optional 16-byte AES key for encrypted mode
      */
     fun forTTSeries(
@@ -269,9 +271,15 @@ data class DeviceCredentials private constructor(
           IllegalArgumentException("Lock ID must be exactly 8 digits")
         )
       }
-      if (password.length != 6 || !password.all { it.isDigit() }) {
+      // Allow 6 or 12 digit passwords (hex-encoded to 3 or 6 bytes)
+      if (!password.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }) {
         return Result.failure(
-          IllegalArgumentException("Password must be exactly 6 digits")
+          IllegalArgumentException("Password must contain only hex digits (0-9, A-F)")
+        )
+      }
+      if (password.length !in 1..12) {
+        return Result.failure(
+          IllegalArgumentException("Password must be 1-12 hex digits")
         )
       }
       if (encryptionKey != null && encryptionKey.size != 16) {
@@ -294,16 +302,22 @@ data class DeviceCredentials private constructor(
      * Create credentials for TT-Series lock with default (zero) lock ID.
      * Lock ID will be auto-detected from device responses.
      *
-     * @param password 6-digit password string
+     * @param password 6 or 12 digit password string
      * @param encryptionKey Optional 16-byte AES key for encrypted mode
      */
     fun forTTSeriesAutoDetect(
       password: String,
       encryptionKey: ByteArray? = null
     ): Result<DeviceCredentials> {
-      if (password.length != 6 || !password.all { it.isDigit() }) {
+      // Allow 6 or 12 digit passwords
+      if (!password.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }) {
         return Result.failure(
-          IllegalArgumentException("Password must be exactly 6 digits")
+          IllegalArgumentException("Password must contain only hex digits (0-9, A-F)")
+        )
+      }
+      if (password.length !in 1..12) {
+        return Result.failure(
+          IllegalArgumentException("Password must be 1-12 hex digits")
         )
       }
       if (encryptionKey != null && encryptionKey.size != 16) {
@@ -343,7 +357,7 @@ data class DeviceCredentials private constructor(
     fun withDefaultTTSeriesKey(): DeviceCredentials {
       return DeviceCredentials(
         encryptionKey = null,
-        password = "112233", // Default TT password
+        password = "112233445566", // Default TT password (12 hex digits = 6 bytes)
         lockId = "00000000",
         protocol = LockProtocol.TT_SERIES,
         timestamp = System.currentTimeMillis()
@@ -463,9 +477,6 @@ object ProtocolDetector {
    */
   private val TT_SERIES_LOCK_ID_PATTERN = Regex("^\\d{8}$")
   
-  private val G_SERIES_LOCK_ID_PATTERN = Regex("^\\d{12}$")
-  
-  
   /**
    * Detect protocol from device name.
    *
@@ -485,7 +496,7 @@ object ProtocolDetector {
     if (lowerName.startsWith("g4-") ||
       lowerName.startsWith("g-lock") ||
       lowerName.startsWith("gseries") ||
-      lowerName.contains("76") ||
+      lowerName.contains("imz") ||
       lowerName.startsWith("bander")) {
       return LockProtocol.G_SERIES
     }
@@ -514,16 +525,6 @@ object ProtocolDetector {
    */
   fun isTTSeriesLockId(name: String?): Boolean {
     return name != null && TT_SERIES_LOCK_ID_PATTERN.matches(name)
-  }
-  
-  /**
-   * Check if a device name looks like a TT-Series Lock ID (8 digits).
-   *
-   * @param name Device name to check
-   * @return true if the name matches the TT-Series Lock ID pattern
-   */
-  fun isGSeriesLockId(name: String?): Boolean {
-    return name != null && G_SERIES_LOCK_ID_PATTERN.matches(name)
   }
   
   /**

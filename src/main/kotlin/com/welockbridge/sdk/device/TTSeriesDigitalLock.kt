@@ -97,10 +97,52 @@ internal class TTSeriesDigitalLock(
   // TT-specific: Store lock ID extracted from responses
   private var detectedLockId: ByteArray? = null
   
-  // Password for TT protocol (6 bytes ASCII)
+  /**
+   * Password for TT protocol (6 bytes)
+   *
+   * According to protocol doc, the password is encoded as hex bytes where
+   * each pair of digits becomes one byte:
+   * - "112233" → 0x11 0x22 0x33 0x00 0x00 0x00
+   * - "112233445566" → 0x11 0x22 0x33 0x44 0x55 0x66
+   *
+   * If password has odd number of digits, it's padded with leading zero.
+   */
   private val password: ByteArray
-    get() = credentials.password?.take(6)?.padEnd(6, '0')?.toByteArray(Charsets.US_ASCII)
-      ?: "000000".toByteArray(Charsets.US_ASCII)
+    get() {
+      val pwd = credentials.password ?: "000000"
+      return convertPasswordToBytes(pwd)
+    }
+  
+  /**
+   * Convert password string to 6-byte array using hex encoding.
+   * Each pair of digits becomes one byte.
+   */
+  private fun convertPasswordToBytes(password: String): ByteArray {
+    val result = ByteArray(6)
+    
+    // Pad password to even length with leading zero if needed
+    val paddedPwd = if (password.length % 2 == 1) "0$password" else password
+    
+    // Pad to 12 chars to fill 6 bytes
+    val fullPwd = paddedPwd.padEnd(12, '0')
+    
+    // Convert each pair of digits to a byte
+    for (i in 0 until 6) {
+      val startIndex = i * 2
+      if (startIndex < fullPwd.length) {
+        val pair = fullPwd.substring(startIndex, minOf(startIndex + 2, fullPwd.length))
+        try {
+          result[i] = pair.toInt(16).toByte()
+        } catch (e: NumberFormatException) {
+          // If not valid hex, use as ASCII digits
+          result[i] = (pair.getOrNull(0)?.digitToIntOrNull() ?: 0).toByte()
+        }
+      }
+    }
+    
+    Log.d(TAG, "Password '$password' encoded as: ${result.joinToString(" ") { "%02X".format(it) }}")
+    return result
+  }
   
   // Encryption key (optional for TT protocol)
   private val encryptionKey: ByteArray?

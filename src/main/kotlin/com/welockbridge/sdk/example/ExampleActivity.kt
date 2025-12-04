@@ -183,9 +183,13 @@ class ExampleActivity : AppCompatActivity() {
           Log.d(TAG, "Using TT-Series protocol with Lock ID: $lockId")
           detectedProtocol = LockProtocol.TT_SERIES
           
+          // Password format: 6-12 hex digits that encode to bytes
+          // Each pair of digits becomes one byte:
+          // "112233445566" → 0x11 0x22 0x33 0x44 0x55 0x66
+          // Common defaults: "112233445566", "000000000000"
           DeviceCredentials.forTTSeries(
-            lockId = lockId,       // Use device name as Lock ID!
-            password = "112233"    // Replace with actual password from your lock
+            lockId = lockId,              // Use device name as Lock ID!
+            password = "112233445566"     // Replace with YOUR actual password
             // Optional: add encryption key if device uses encryption
             // encryptionKey = yourAesKey
           ).getOrElse {
