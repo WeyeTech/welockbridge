@@ -125,8 +125,8 @@ afterEvaluate {
         
         pom {
           name.set("WeLockBridge BLE SDK")
-          description.set("Professional BLE SDK for G-Series digital locks")
-          url.set("https://github.com/WeyeTech/welockbridge") // 🔴 CHANGED
+          description.set("Professional BLE SDK for G-Series & TT-Series digital locks")
+          url.set("https://github.com/WeyeTech/welockbridge")
         }
       }
     }

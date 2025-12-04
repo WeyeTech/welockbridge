@@ -35,12 +35,12 @@ import java.util.UUID
  * @version 1.0.0
  */
 @SuppressLint("MissingPermission")
-class TTSeriesDigitalLock(
+internal class TTSeriesDigitalLock(
     private val context: Context,
     private val androidDevice: AndroidBluetoothDevice,
     private val credentials: DeviceCredentials,
     private val lockId: ByteArray = byteArrayOf(0x00, 0x00, 0x00, 0x00) // Default lock ID
-) : LockableDevice, StatusReportingDevice {
+) : TTSeriesLockDevice, StatusReportingDevice {
 
     companion object {
         private const val TAG = "WeLockBridge.TTLock"

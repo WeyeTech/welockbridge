@@ -12,7 +12,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.welockbridge.sdk.WeLockBridgeSdk
 import com.welockbridge.sdk.core.*
-import com.welockbridge.sdk.device.TTSeriesDigitalLock
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 

@@ -486,15 +486,15 @@ class WeLockBridgeSdk private constructor(
     /**
      * Get a TT-Series lock device by ID (for TT-specific operations).
      */
-    fun getTTSeriesLock(deviceId: String): TTSeriesDigitalLock? {
-        return connectedDevices[deviceId] as? TTSeriesDigitalLock
+    fun getTTSeriesLock(deviceId: String): TTSeriesLockDevice? {
+        return connectedDevices[deviceId] as? TTSeriesLockDevice
     }
 
     /**
      * Get a G-Series lock device by ID (for G-specific operations).
      */
-    fun getGSeriesLock(deviceId: String): GSeriesDigitalLock? {
-        return connectedDevices[deviceId] as? GSeriesDigitalLock
+    fun getGSeriesLock(deviceId: String): GSeriesLockDevice? {
+        return connectedDevices[deviceId] as? GSeriesLockDevice
     }
 
     /**

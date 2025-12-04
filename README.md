@@ -301,8 +301,8 @@ DeviceCredentials.withDefaultTTSeriesKey(): DeviceCredentials
 | `getDevice(deviceId)` | `BluetoothDevice?` | Get connected device |
 | `getLockableDevice(deviceId)` | `LockableDevice?` | Get lockable device |
 | `getStatusReportingDevice(deviceId)` | `StatusReportingDevice?` | Get status device |
-| `getTTSeriesLock(deviceId)` | `TTSeriesDigitalLock?` | Get TT-Series device |
-| `getGSeriesLock(deviceId)` | `GSeriesDigitalLock?` | Get G-Series device |
+| `getTTSeriesLock(deviceId)` | `TTSeriesLockDevice?` | Get TT-Series device |
+| `getGSeriesLock(deviceId)` | `GSeriesLockDevice?` | Get G-Series device |
 | `getDeviceProtocol(deviceId)` | `LockProtocol?` | Get device protocol |
 | `getConnectedDevices()` | `List<BluetoothDevice>` | All connected devices |
 | `getConnectedDeviceCount()` | `Int` | Connected device count |
@@ -323,7 +323,7 @@ DeviceCredentials.withDefaultTTSeriesKey(): DeviceCredentials
 | `queryLockStatus()` | `suspend Result<LockState>` | Query fresh state |
 | `isConnected()` | `Boolean` | Connection status |
 
-### TTSeriesDigitalLock (TT-Specific)
+### TTSeriesLockDevice (TT-Specific)
 
 | Member | Type | Description |
 |--------|------|-------------|

@@ -129,6 +129,34 @@ interface StatusReportingDevice : BluetoothDevice {
     suspend fun queryStatus(): Result<DeviceStatus>
 }
 
+/**
+ * Interface for TT-Series specific operations.
+ * Extends LockableDevice with TT-protocol specific features.
+ */
+interface TTSeriesLockDevice : LockableDevice {
+    /** Calibrate device time to current system time */
+    suspend fun calibrateTime(): Result<Unit>
+    
+    /** Get firmware version string */
+    suspend fun getVersion(): Result<String>
+    
+    /** Set work mode (sleep or real-time) */
+    suspend fun setWorkMode(sleepMode: Boolean): Result<Unit>
+    
+    /** Get detected lock ID as string (8 digits) */
+    fun getLockIdString(): String?
+    
+    /** Get current battery level percentage */
+    fun getBatteryLevel(): Int
+}
+
+/**
+ * Interface for G-Series specific operations.
+ * Extends LockableDevice. G-Series locks use the standard LockableDevice
+ * interface for all operations. This interface serves as a type marker.
+ */
+interface GSeriesLockDevice : LockableDevice
+
 // ============================================================================
 // DATA CLASSES
 // ============================================================================
