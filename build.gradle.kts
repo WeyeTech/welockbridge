@@ -11,7 +11,7 @@ buildscript {
     mavenCentral()
   }
   dependencies {
-    classpath("com.android.tools.build:gradle:8.7.3")
+    classpath("com.android.tools.build:gradle:8.13.1")
     classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.20")
   }
 }
@@ -29,7 +29,7 @@ repositories {
 // SDK Version Configuration  (JitPack coordinates)
 // ============================================================================
 
-val sdkVersion = "1.1.6"
+val sdkVersion = "1.1.7"
 val sdkGroupId = "com.github.WeyeTech"
 val sdkArtifactId = "welockbridge"
 
