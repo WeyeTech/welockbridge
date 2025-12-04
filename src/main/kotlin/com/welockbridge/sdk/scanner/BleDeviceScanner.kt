@@ -5,6 +5,7 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.BluetoothLeScanner
 import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
@@ -20,8 +21,11 @@ import kotlinx.coroutines.*
 import java.util.UUID
 
 /**
- * BLE Device Scanner - Fully Configurable
- * NO HARDCODED VALUES - All patterns from SdkConfig
+ * WeLockBridge SDK - BLE Device Scanner
+ *
+ * Scans for compatible BLE devices and identifies their type.
+ * All identification patterns are configurable via SdkConfig.
+ * NO HARDCODED VALUES - fully configurable.
  */
 internal class BleDeviceScanner(
   private val context: Context,
@@ -43,15 +47,22 @@ internal class BleDeviceScanner(
   private val discoveredDevices = mutableMapOf<String, ScannedDevice>()
   private var includeAllDevices = false
   
+  // Runtime added patterns (in addition to config)
   private val runtimeMacPrefixes = mutableListOf<String>()
   private val runtimeNamePatterns = mutableListOf<String>()
   private val runtimeServiceUuids = mutableListOf<UUID>()
   
+  /**
+   * Update configuration.
+   */
   fun updateConfig(newConfig: SdkConfig) {
     config = newConfig
-    Log.d(TAG, "Config updated")
+    Log.d(TAG, "Config updated: ${config.macPrefixes.size} MAC prefixes, ${config.namePatterns.size} name patterns, ${config.serviceUuids.size} service UUIDs")
   }
   
+  /**
+   * Add MAC prefix at runtime.
+   */
   fun addMacPrefix(prefix: String) {
     val normalized = prefix.uppercase().trim()
     if (normalized.isNotEmpty() && !runtimeMacPrefixes.contains(normalized)) {
@@ -60,6 +71,9 @@ internal class BleDeviceScanner(
     }
   }
   
+  /**
+   * Add name pattern at runtime.
+   */
   fun addNamePattern(pattern: String) {
     val normalized = pattern.lowercase().trim()
     if (normalized.isNotEmpty() && !runtimeNamePatterns.contains(normalized)) {
@@ -68,6 +82,9 @@ internal class BleDeviceScanner(
     }
   }
   
+  /**
+   * Add service UUID at runtime.
+   */
   fun addServiceUuid(uuid: UUID) {
     if (!runtimeServiceUuids.contains(uuid)) {
       runtimeServiceUuids.add(uuid)
@@ -75,6 +92,9 @@ internal class BleDeviceScanner(
     }
   }
   
+  /**
+   * Clear runtime patterns.
+   */
   fun clearRuntimePatterns() {
     runtimeMacPrefixes.clear()
     runtimeNamePatterns.clear()
@@ -82,10 +102,30 @@ internal class BleDeviceScanner(
     Log.d(TAG, "Cleared runtime patterns")
   }
   
-  private fun getAllMacPrefixes(): List<String> = config.macPrefixes + runtimeMacPrefixes
-  private fun getAllNamePatterns(): List<String> = config.namePatterns + runtimeNamePatterns
-  private fun getAllServiceUuids(): List<UUID> = config.serviceUuids + runtimeServiceUuids
+  /**
+   * Get all effective MAC prefixes (config + runtime).
+   */
+  private fun getAllMacPrefixes(): List<String> {
+    return config.macPrefixes + runtimeMacPrefixes
+  }
   
+  /**
+   * Get all effective name patterns (config + runtime).
+   */
+  private fun getAllNamePatterns(): List<String> {
+    return config.namePatterns + runtimeNamePatterns
+  }
+  
+  /**
+   * Get all effective service UUIDs (config + runtime).
+   */
+  private fun getAllServiceUuids(): List<UUID> {
+    return config.serviceUuids + runtimeServiceUuids
+  }
+  
+  /**
+   * Start scanning for BLE devices.
+   */
   @Suppress("MissingPermission")
   fun startScan(
     deviceTypes: Set<DeviceType> = setOf(DeviceType.DIGITAL_LOCK),
@@ -95,7 +135,8 @@ internal class BleDeviceScanner(
     onScanComplete: () -> Unit,
     onError: (SdkException) -> Unit
   ) {
-    Log.d(TAG, "Starting BLE scan...")
+    Log.d(TAG, "Starting BLE scan (includeUnknown=$includeUnknown)...")
+    Log.d(TAG, "Using ${getAllMacPrefixes().size} MAC prefixes, ${getAllNamePatterns().size} name patterns, ${getAllServiceUuids().size} service UUIDs")
     
     if (!hasRequiredPermissions()) {
       onError(SdkException.PermissionDeniedException("Bluetooth permissions required"))
@@ -126,7 +167,7 @@ internal class BleDeviceScanner(
       }
       
       override fun onScanFailed(errorCode: Int) {
-        Log.e(TAG, "Scan failed: $errorCode")
+        Log.e(TAG, "Scan failed with error code: $errorCode")
         isScanning = false
         onError(SdkException.PermissionDeniedException("Scan failed: $errorCode"))
       }
@@ -140,7 +181,7 @@ internal class BleDeviceScanner(
     
     try {
       bleScanner.startScan(null, scanSettings, scanCallback)
-      Log.d(TAG, "Scan started")
+      Log.d(TAG, "Scan started successfully")
       
       CoroutineScope(Dispatchers.Main).launch {
         delay(scanDurationMs)
@@ -154,6 +195,9 @@ internal class BleDeviceScanner(
     }
   }
   
+  /**
+   * Backward compatible overload.
+   */
   @Suppress("MissingPermission")
   fun startScan(
     deviceTypes: Set<DeviceType> = setOf(DeviceType.DIGITAL_LOCK),
@@ -165,11 +209,15 @@ internal class BleDeviceScanner(
     startScan(deviceTypes, scanDurationMs, false, onDeviceFound, onScanComplete, onError)
   }
   
+  /**
+   * Stop the current scan.
+   */
   @Suppress("MissingPermission")
   fun stopScan() {
     if (!isScanning) return
     
-    Log.d(TAG, "Stopping scan...")
+    Log.d(TAG, "Stopping BLE scan...")
+    
     scanCallback?.let {
       try {
         bleScanner?.stopScan(it)
@@ -177,6 +225,7 @@ internal class BleDeviceScanner(
         Log.w(TAG, "Error stopping scan: ${e.message}")
       }
     }
+    
     scanCallback = null
     isScanning = false
   }
@@ -190,7 +239,10 @@ internal class BleDeviceScanner(
     val address = device.address ?: return
     val rssi = result.rssi
     
+    // Filter by signal strength from config
     if (rssi < config.minRssi) return
+    
+    // Skip if already discovered
     if (discoveredDevices.containsKey(address)) return
     
     val deviceType = identifyDeviceType(result)
@@ -199,10 +251,13 @@ internal class BleDeviceScanner(
     val name = device.name
     Log.d(TAG, "Scanned: $address, name=$name, rssi=$rssi, type=$deviceType")
     
+    // Apply filter
     val shouldInclude = when {
       includeAllDevices -> true
       deviceTypes.contains(deviceType) -> true
-      deviceType == DeviceType.UNKNOWN && config.autoIdentifyUnknown -> mightBeLock(result)
+      deviceType == DeviceType.UNKNOWN && config.autoIdentifyUnknown -> {
+        mightBeLock(result)
+      }
       else -> false
     }
     
@@ -217,10 +272,13 @@ internal class BleDeviceScanner(
     )
     
     discoveredDevices[address] = scannedDevice
-    Log.d(TAG, "Found device: $address")
+    Log.d(TAG, "Found device: $address, name=$name, rssi=$rssi, type=$deviceType")
     onDeviceFound(discoveredDevices.values.toList())
   }
   
+  /**
+   * Identifies device type based on configured patterns.
+   */
   private fun identifyDeviceType(result: ScanResult): DeviceType {
     val device = result.device
     val scanRecord = result.scanRecord
@@ -229,27 +287,28 @@ internal class BleDeviceScanner(
     val name = device?.name?.lowercase() ?: ""
     val address = device?.address?.uppercase() ?: ""
     
-    // Check MAC prefix
+    // CHECK 1: MAC Address Prefix
     for (prefix in getAllMacPrefixes()) {
       if (address.startsWith(prefix.uppercase())) {
-        Log.d(TAG, "Identified by MAC: $prefix")
+        Log.d(TAG, "Identified by MAC prefix: $prefix")
         return DeviceType.DIGITAL_LOCK
       }
     }
     
-    // Check service UUIDs
+    // CHECK 2: Service UUIDs
+    val allServiceUuids = getAllServiceUuids()
     scanRecord?.serviceUuids?.forEach { parcelUuid ->
-      if (getAllServiceUuids().contains(parcelUuid.uuid)) {
-        Log.d(TAG, "Identified by UUID: ${parcelUuid.uuid}")
+      if (allServiceUuids.contains(parcelUuid.uuid)) {
+        Log.d(TAG, "Identified by service UUID: ${parcelUuid.uuid}")
         return DeviceType.DIGITAL_LOCK
       }
     }
     
-    // Check name patterns
+    // CHECK 3: Device Name Patterns
     if (name.isNotEmpty()) {
       for (pattern in getAllNamePatterns()) {
         if (name.contains(pattern.lowercase())) {
-          Log.d(TAG, "Identified by name: $pattern")
+          Log.d(TAG, "Identified by name pattern: $pattern")
           return DeviceType.DIGITAL_LOCK
         }
       }
@@ -258,11 +317,21 @@ internal class BleDeviceScanner(
     return DeviceType.UNKNOWN
   }
   
+  /**
+   * Heuristic check if an unknown device might be a lock.
+   */
   private fun mightBeLock(result: ScanResult): Boolean {
     val scanRecord = result.scanRecord ?: return false
+    
+    // Has manufacturer data (common for locks)
     if (scanRecord.manufacturerSpecificData?.size() ?: 0 > 0) return true
+    
+    // Has service data
     if (scanRecord.serviceData?.isNotEmpty() == true) return true
+    
+    // Has any service UUIDs
     if (scanRecord.serviceUuids?.isNotEmpty() == true) return true
+    
     return false
   }
   
@@ -279,6 +348,8 @@ internal class BleDeviceScanner(
   }
   
   fun isBluetoothEnabled(): Boolean = bluetoothAdapter?.isEnabled == true
+  
   fun getDiscoveredDevices(): List<ScannedDevice> = discoveredDevices.values.toList()
+  
   fun getConfig(): SdkConfig = config
 }
