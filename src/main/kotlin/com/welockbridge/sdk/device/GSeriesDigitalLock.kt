@@ -1,5 +1,6 @@
 package com.welockbridge.sdk.device
 
+import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice as AndroidBluetoothDevice
 import android.content.Context
 import android.util.Log
@@ -16,6 +17,7 @@ import java.util.UUID
  * Implements LockableDevice and StatusReportingDevice interfaces
  * for G-Series digital locks using the Bander Protocol V11.
  */
+@SuppressLint("MissingPermission")
 internal class GSeriesDigitalLock(
   private val context: Context,
   private val androidDevice: AndroidBluetoothDevice,
@@ -29,7 +31,11 @@ internal class GSeriesDigitalLock(
   }
   
   override val deviceId: String = androidDevice.address
-  override val deviceName: String = androidDevice.name ?: "G-Series Lock"
+  override val deviceName: String = try {
+    androidDevice.name ?: "G-Series Lock"
+  } catch (e: SecurityException) {
+    "G-Series Lock"
+  }
   override val deviceType: DeviceType = DeviceType.DIGITAL_LOCK
   
   private val connectionManager = BleConnectionManager(context, androidDevice)
@@ -160,7 +166,13 @@ internal class GSeriesDigitalLock(
       return Result.failure(SdkException.NotConnectedException())
     }
     
-    val command = GSeriesProtocol.buildLockCommand(credentials.encryptionKey)
+    val key = credentials.encryptionKey
+    if (key == null) {
+      Log.e(TAG, "❌ Encryption key is required!")
+      return Result.failure(SdkException.CommandFailedException(null))
+    }
+    
+    val command = GSeriesProtocol.buildLockCommand(key)
     Log.d(TAG, "📤 Lock command built: ${command.size} bytes")
     
     val response = sendCommandAndWaitForResponse(command)
@@ -168,7 +180,7 @@ internal class GSeriesDigitalLock(
     return response.fold(
       onSuccess = { data ->
         Log.d(TAG, "📥 Parsing lock response...")
-        val parsed = GSeriesProtocol.parseResponse(data, credentials.encryptionKey)
+        val parsed = GSeriesProtocol.parseResponse(data, key)
         if (parsed?.isSuccess == true) {
           Log.d(TAG, "✅ Lock successful!")
           currentLockState = LockState.LOCKED
@@ -194,7 +206,13 @@ internal class GSeriesDigitalLock(
       return Result.failure(SdkException.NotConnectedException())
     }
     
-    val command = GSeriesProtocol.buildUnlockCommand(credentials.encryptionKey)
+    val key = credentials.encryptionKey
+    if (key == null) {
+      Log.e(TAG, "❌ Encryption key is required!")
+      return Result.failure(SdkException.CommandFailedException(null))
+    }
+    
+    val command = GSeriesProtocol.buildUnlockCommand(key)
     Log.d(TAG, "📤 Unlock command built: ${command.size} bytes")
     
     val response = sendCommandAndWaitForResponse(command)
@@ -202,7 +220,7 @@ internal class GSeriesDigitalLock(
     return response.fold(
       onSuccess = { data ->
         Log.d(TAG, "📥 Parsing unlock response...")
-        val parsed = GSeriesProtocol.parseResponse(data, credentials.encryptionKey)
+        val parsed = GSeriesProtocol.parseResponse(data, key)
         if (parsed?.isSuccess == true) {
           Log.d(TAG, "✅ Unlock successful!")
           currentLockState = LockState.UNLOCKED
@@ -228,7 +246,13 @@ internal class GSeriesDigitalLock(
       return Result.failure(SdkException.NotConnectedException())
     }
     
-    val command = GSeriesProtocol.buildQueryStatusCommand(credentials.encryptionKey)
+    val key = credentials.encryptionKey
+    if (key == null) {
+      Log.e(TAG, "❌ Encryption key is required!")
+      return Result.failure(SdkException.CommandFailedException(null))
+    }
+    
+    val command = GSeriesProtocol.buildQueryStatusCommand(key)
     Log.d(TAG, "📤 Query command built: ${command.size} bytes")
     
     val response = sendCommandAndWaitForResponse(command)
@@ -236,7 +260,7 @@ internal class GSeriesDigitalLock(
     return response.fold(
       onSuccess = { data ->
         Log.d(TAG, "📥 Parsing query response...")
-        val parsed = GSeriesProtocol.parseResponse(data, credentials.encryptionKey)
+        val parsed = GSeriesProtocol.parseResponse(data, key)
         if (parsed != null) {
           val isLocked = GSeriesProtocol.extractLockState(parsed.content)
           val battery = GSeriesProtocol.extractBatteryLevel(parsed.content)
