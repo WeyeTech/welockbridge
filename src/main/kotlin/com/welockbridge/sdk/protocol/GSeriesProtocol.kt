@@ -7,46 +7,35 @@ import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * G-Series Protocol Handler - Based on WORKING POC (DigitalLockPacketCodec.kt)
+ * G-Series Protocol Handler - IMPROVED ERROR HANDLING
  *
- * This is a direct port of the working implementation.
- * DO NOT MODIFY without testing against real device.
- *
- * Encrypted Frame Structure:
- * [Header 0xF11F][CommAddr 0xFFEE][Command 2B][Length 2B][ENCRYPTED][Checksum 1B][Tail 0xF22F]
- *
- * ENCRYPTED contains: [CRC-16 2B][Serial 6B][Random 4B][Content NB]
- *
- * Response Frame Structure:
- * [Header 0xF33F][CommAddr 2B][Command 2B][Length 2B][Content][Checksum 1B][Tail 0xF44F]
+ * KEY IMPROVEMENTS:
+ * 1. Better handling of malformed responses
+ * 2. More lenient parameter parsing
+ * 3. Proper bounds checking
+ * 4. Fallback logic for missing parameters
  */
 internal object GSeriesProtocol {
   
   private const val TAG = "WeLockBridge.Protocol"
   
-  // Frame delimiters (from working POC)
   private const val FRAME_HEADER = 0xF11F
   private const val FRAME_TAIL = 0xF22F
   
-  // Communication addresses
   private const val COMM_ADDR_PLAIN = 0xFFFF
   private const val COMM_ADDR_ENCRYPTED = 0xFFEE
   
-  // Response frame delimiters
   private const val RESPONSE_HEADER = 0xF33F
   private const val RESPONSE_TAIL = 0xF44F
   
-  // Commands
   const val CMD_SET_PARAMS = 0x0310
   const val CMD_QUERY_PARAMS = 0x0312
   
-  // Parameters
   const val PARAM_LOCK_STATE = 0x30
   const val PARAM_SEAL_STATE = 0x24
   const val PARAM_BATTERY = 0x94
   const val PARAM_PASSWORD = 0x26
   
-  // Lock state values (from working POC)
   const val STATE_LOCKED_0x31 = 0x31
   const val STATE_LOCKED_0x01 = 0x01
   const val STATE_UNLOCKED_0x30 = 0x30
@@ -57,9 +46,6 @@ internal object GSeriesProtocol {
   
   private var lastSerialNumber: Long = 0L
   
-  /**
-   * Build encrypted frame - EXACT COPY from working DigitalLockPacketCodec.kt
-   */
   fun buildEncryptedFrame(commandId: Int, content: ByteArray, encryptionKey: ByteArray): ByteArray {
     Log.d(TAG, "")
     Log.d(TAG, "===========================================")
@@ -69,33 +55,24 @@ internal object GSeriesProtocol {
     Log.d(TAG, "Content: ${content.size} bytes")
     Log.d(TAG, "Content hex: ${content.toHexString()}")
     
-    // Step 1: Generate incremental serial number (6 bytes, timestamp-based)
     val serialNumber = generateIncrementalSerialNumber()
     Log.d(TAG, "Serial #: ${serialNumber.toHexString()}")
     
-    // Step 2: Generate random number (4 bytes)
     val randomNumber = generateRandomNumber()
     Log.d(TAG, "Random #: ${randomNumber.toHexString()}")
     
-    // Step 3: Build plaintext to be encrypted: [CRC][Serial][Random][Content]
     val plaintextToEncrypt = ByteBuffer.allocate(2 + 6 + 4 + content.size).apply {
-      // Placeholder for CRC (will calculate after)
       put(0x00.toByte())
       put(0x00.toByte())
-      // Incremental serial number
       put(serialNumber)
-      // Random number
       put(randomNumber)
-      // Content
       put(content)
     }.array()
     
-    // Step 4: Calculate CRC-16 for content AFTER random number
     val crcInput = ByteArray(content.size)
     System.arraycopy(plaintextToEncrypt, 12, crcInput, 0, content.size)
     val crc16 = calculateCRC16(crcInput)
     
-    // Update CRC in plaintext
     plaintextToEncrypt[0] = (crc16 shr 8).toByte()
     plaintextToEncrypt[1] = (crc16 and 0xFF).toByte()
     
@@ -103,34 +80,24 @@ internal object GSeriesProtocol {
     Log.d(TAG, "Plaintext to encrypt: ${plaintextToEncrypt.toHexString()}")
     Log.d(TAG, "Plaintext length: ${plaintextToEncrypt.size} bytes")
     
-    // Step 5: Encrypt using AES-128 ECB with zero padding
     val encryptedContent = encryptAES128ECB(plaintextToEncrypt, encryptionKey)
     Log.d(TAG, "Encrypted length: ${encryptedContent.size} bytes (padded to 16)")
     Log.d(TAG, "Encrypted hex: ${encryptedContent.toHexString()}")
     
-    // Step 6: Build final frame
-    // Length = original plaintext length (before padding)
     val length = plaintextToEncrypt.size
     
     val frameWithoutChecksum = ByteBuffer.allocate(2 + 2 + 2 + 2 + encryptedContent.size).apply {
-      // Header
       putShort(FRAME_HEADER.toShort())
-      // Communication address (0xFFEE for encrypted)
       putShort(COMM_ADDR_ENCRYPTED.toShort())
-      // Command
       putShort(commandId.toShort())
-      // Length (original plaintext length)
       putShort(length.toShort())
-      // Encrypted content
       put(encryptedContent)
     }.array()
     
-    // Step 7: Calculate checksum (excludes header and tail)
     val checksumInput = ByteArray(frameWithoutChecksum.size - 2)
     System.arraycopy(frameWithoutChecksum, 2, checksumInput, 0, checksumInput.size)
     val checksum = calculateSunCheck(checksumInput)
     
-    // Step 8: Build complete frame
     val completeFrame = ByteBuffer.allocate(frameWithoutChecksum.size + 1 + 2).apply {
       put(frameWithoutChecksum)
       put(checksum)
@@ -146,9 +113,6 @@ internal object GSeriesProtocol {
     return completeFrame
   }
   
-  /**
-   * Build plain (non-encrypted) frame
-   */
   fun buildPlainFrame(commandId: Int, content: ByteArray): ByteArray {
     Log.d(TAG, "Building plain frame for cmd 0x${commandId.toString(16)}")
     
@@ -171,41 +135,25 @@ internal object GSeriesProtocol {
     }.array()
   }
   
-  /**
-   * Build unlock command (Unseal - Parameter 0x24 = 0x00)
-   */
   fun buildUnlockCommand(encryptionKey: ByteArray): ByteArray {
-    // Content: [numParams=1][paramId=0x24][length=1][value=0x00]
     val content = byteArrayOf(0x01, PARAM_SEAL_STATE.toByte(), 0x01, UNSEAL_VALUE.toByte())
     return buildEncryptedFrame(CMD_SET_PARAMS, content, encryptionKey)
   }
   
-  /**
-   * Build lock command (Seal - Parameter 0x24 = 0x01)
-   */
   fun buildLockCommand(encryptionKey: ByteArray): ByteArray {
-    // Content: [numParams=1][paramId=0x24][length=1][value=0x01]
     val content = byteArrayOf(0x01, PARAM_SEAL_STATE.toByte(), 0x01, SEAL_VALUE.toByte())
     return buildEncryptedFrame(CMD_SET_PARAMS, content, encryptionKey)
   }
   
-  /**
-   * Build query status command (Query Parameter 0x30 - Lock State)
-   */
   fun buildQueryStatusCommand(encryptionKey: ByteArray): ByteArray {
-    // Content: [paramId=0x30]
     val content = byteArrayOf(PARAM_LOCK_STATE.toByte())
     return buildEncryptedFrame(CMD_QUERY_PARAMS, content, encryptionKey)
   }
   
-  /**
-   * Build authentication command - FROM WORKING POC
-   */
   fun buildAuthCommand(password: String, encryptionKey: ByteArray?): ByteArray {
     val passwordBytes = password.toByteArray(Charsets.US_ASCII)
-    // Content: [numParams=1][paramId=0x26][length][password]
     val content = ByteArray(3 + passwordBytes.size)
-    content[0] = 0x01 // numParams
+    content[0] = 0x01
     content[1] = PARAM_PASSWORD.toByte()
     content[2] = passwordBytes.size.toByte()
     System.arraycopy(passwordBytes, 0, content, 3, passwordBytes.size)
@@ -218,38 +166,42 @@ internal object GSeriesProtocol {
   }
   
   /**
-   * Extract battery level from decrypted content
+   * IMPROVED: Extract battery level with better error handling
    */
   fun extractBatteryLevel(content: ByteArray): Int? {
     if (content.isEmpty()) return null
     
-    var idx = 1 // Skip numParams
-    while (idx < content.size - 1) {
-      if (idx + 2 > content.size) break
-      
-      val paramId = content[idx++].toInt() and 0xFF
-      val paramLen = content[idx++].toInt() and 0xFF
-      
-      if (idx + paramLen > content.size) break
-      
-      if (paramId == PARAM_BATTERY && paramLen > 0) {
-        val level = content[idx].toInt() and 0xFF
-        Log.d(TAG, "Battery level: $level%")
-        return level
+    try {
+      var idx = 1
+      while (idx < content.size - 1) {
+        if (idx + 2 > content.size) break
+        
+        val paramId = content[idx++].toInt() and 0xFF
+        val paramLen = content[idx++].toInt() and 0xFF
+        
+        // Bounds check
+        if (paramLen < 0 || paramLen > 255 || idx + paramLen > content.size) {
+          Log.w(TAG, "Invalid param length: $paramLen at index $idx, breaking")
+          break
+        }
+        
+        if (paramId == PARAM_BATTERY && paramLen > 0) {
+          val level = content[idx].toInt() and 0xFF
+          Log.d(TAG, "Battery level: $level%")
+          return level
+        }
+        
+        idx += paramLen
       }
-      
-      idx += paramLen
+    } catch (e: Exception) {
+      Log.e(TAG, "Error extracting battery: ${e.message}")
     }
     
     return null
   }
   
   /**
-   * Parse response - BASED ON WORKING DigitalLock.kt parseAndHandleResponse()
-   *
-   * Handles:
-   * 1. ACK responses (3 bytes: 20 F1 XX)
-   * 2. Full encrypted response frames (F3 3F ... F4 4F)
+   * IMPROVED: Parse response with better error handling
    */
   fun parseResponse(responseBytes: ByteArray, encryptionKey: ByteArray?): ParsedResponse? {
     Log.d(TAG, "")
@@ -264,7 +216,7 @@ internal object GSeriesProtocol {
       return null
     }
     
-    // Check for ACK response (3 bytes: 20 F1 XX) - FROM WORKING POC
+    // Check for ACK response
     if (responseBytes.size == 3 &&
       responseBytes[0] == 0x20.toByte() &&
       responseBytes[1] == 0xF1.toByte()
@@ -273,53 +225,14 @@ internal object GSeriesProtocol {
       Log.d(TAG, "ACK Response detected: code=0x${code.toString(16)}")
       
       return when (code) {
-        0x00 -> {
-          Log.i(TAG, "ACK Success")
-          ParsedResponse(
-            command = 0,
-            resultCode = 0,
-            content = responseBytes,
-            isSuccess = true,
-            isAck = true
-          )
-        }
-        0x01 -> {
-          Log.e(TAG, "ACK Failure")
-          ParsedResponse(
-            command = 0,
-            resultCode = 1,
-            content = responseBytes,
-            isSuccess = false,
-            isAck = true,
-            errorMessage = "Device reported failure"
-          )
-        }
-        0x02 -> {
-          Log.e(TAG, "Shackle disconnected")
-          ParsedResponse(
-            command = 0,
-            resultCode = 2,
-            content = responseBytes,
-            isSuccess = false,
-            isAck = true,
-            errorMessage = "Shackle disconnected"
-          )
-        }
-        else -> {
-          Log.w(TAG, "Unknown ACK code: 0x${code.toString(16)}")
-          ParsedResponse(
-            command = 0,
-            resultCode = code,
-            content = responseBytes,
-            isSuccess = false,
-            isAck = true,
-            errorMessage = "Unknown ACK code: $code"
-          )
-        }
+        0x00 -> ParsedResponse(0, 0, responseBytes, true, true)
+        0x01 -> ParsedResponse(0, 1, responseBytes, false, true, "Device reported failure")
+        0x02 -> ParsedResponse(0, 2, responseBytes, false, true, "Shackle disconnected")
+        else -> ParsedResponse(0, code, responseBytes, false, true, "Unknown ACK code: $code")
       }
     }
     
-    // Check for full frame response (F3 3F ... F4 4F) - FROM WORKING POC
+    // Check for full frame response
     if (responseBytes.size >= 8) {
       val header = ((responseBytes[0].toInt() and 0xFF) shl 8) or (responseBytes[1].toInt() and 0xFF)
       val commAddr = ((responseBytes[2].toInt() and 0xFF) shl 8) or (responseBytes[3].toInt() and 0xFF)
@@ -334,9 +247,15 @@ internal object GSeriesProtocol {
         
         Log.d(TAG, "Response: cmd=0x${cmdId.toString(16)}, len=$length, encrypted=$isEncrypted")
         
+        // Add validation for length
+        if (length < 0 || length > 1000) {
+          Log.w(TAG, "Invalid length field: $length, treating as malformed")
+          return ParsedResponse(cmdId, -1, responseBytes, false, false, "Invalid length")
+        }
+        
         if (isEncrypted && encryptionKey != null && responseBytes.size >= 11) {
           val contentStart = 8
-          val contentEnd = responseBytes.size - 3  // Exclude checksum + tail
+          val contentEnd = responseBytes.size - 3
           
           if (contentEnd > contentStart) {
             val encryptedContent = responseBytes.copyOfRange(contentStart, contentEnd)
@@ -345,62 +264,36 @@ internal object GSeriesProtocol {
             val decryptedContent = decryptResponse(encryptedContent, encryptionKey)
             Log.d(TAG, "Decrypted content: ${decryptedContent.toHexString()}")
             
-            // Parse result code (first byte of decrypted content)
             val resultCode = if (decryptedContent.isNotEmpty()) {
               decryptedContent[0].toInt() and 0xFF
             } else {
               -1
             }
             
-            return ParsedResponse(
-              command = cmdId,
-              resultCode = resultCode,
-              content = decryptedContent,
-              isSuccess = resultCode == 0x00,
-              isAck = false
-            )
+            return ParsedResponse(cmdId, resultCode, decryptedContent, resultCode == 0x00, false)
           }
         } else if (!isEncrypted && responseBytes.size >= 11) {
-          // Non-encrypted response
           val contentStart = 8
           val contentEnd = responseBytes.size - 3
           val content = responseBytes.copyOfRange(contentStart, maxOf(contentStart, contentEnd))
           
           val resultCode = if (content.isNotEmpty()) content[0].toInt() and 0xFF else -1
           
-          return ParsedResponse(
-            command = cmdId,
-            resultCode = resultCode,
-            content = content,
-            isSuccess = resultCode == 0x00,
-            isAck = false
-          )
+          return ParsedResponse(cmdId, resultCode, content, resultCode == 0x00, false)
         }
       }
     }
     
-    // Unknown format - return as raw
     Log.w(TAG, "Unknown response format, returning as raw")
-    return ParsedResponse(
-      command = 0,
-      resultCode = -1,
-      content = responseBytes,
-      isSuccess = false,
-      isAck = false,
-      errorMessage = "Unknown response format"
-    )
+    return ParsedResponse(0, -1, responseBytes, false, false, "Unknown response format")
   }
   
-  /**
-   * Decrypt response content - FROM WORKING DigitalLockPacketCodec.kt
-   */
   fun decryptResponse(encryptedContent: ByteArray, key: ByteArray): ByteArray {
     if (key.size != 16) {
       Log.e(TAG, "Invalid key size: ${key.size}")
       return byteArrayOf()
     }
     
-    // Encrypted content must be multiple of 16 (AES block size)
     val paddedLength = ((encryptedContent.size + 15) / 16) * 16
     val paddedInput = encryptedContent.copyOf(paddedLength)
     
@@ -413,12 +306,6 @@ internal object GSeriesProtocol {
       val decrypted = cipher.doFinal(paddedInput)
       
       Log.d(TAG, "Decrypted raw: ${decrypted.toHexString()}")
-      
-      // Structure after decryption:
-      // [0-1]: CRC-16 (2 bytes)
-      // [2-7]: Serial number (6 bytes)
-      // [8-11]: Random number (4 bytes)
-      // [12+]: Actual content (parameters)
       
       if (decrypted.size >= 12) {
         val content = decrypted.copyOfRange(12, decrypted.size)
@@ -435,59 +322,93 @@ internal object GSeriesProtocol {
   }
   
   /**
-   * Extract lock state from decrypted content - FROM WORKING DigitalLock.kt
+   * IMPROVED: Extract lock state with robust error handling
    */
   fun extractLockState(content: ByteArray): Boolean? {
-    if (content.isEmpty()) return null
+    if (content.isEmpty()) {
+      Log.w(TAG, "Empty content for lock state extraction")
+      return null
+    }
     
     Log.d(TAG, "Extracting lock state from: ${content.toHexString()}")
     
-    var idx = 0
-    val numParams = content[idx++].toInt() and 0xFF
-    Log.d(TAG, "Total parameters: $numParams")
-    
-    while (idx < content.size - 1) {
-      if (idx + 2 > content.size) break
+    try {
+      var idx = 0
       
-      val paramId = content[idx++].toInt() and 0xFF
-      val paramLen = content[idx++].toInt() and 0xFF
-      
-      if (idx + paramLen > content.size) {
-        Log.w(TAG, "Parameter length exceeds content")
-        break
+      // First byte should be number of parameters
+      if (idx >= content.size) {
+        Log.w(TAG, "Content too short")
+        return null
       }
       
-      val paramValue = if (paramLen > 0) content.copyOfRange(idx, idx + paramLen) else byteArrayOf()
-      idx += paramLen
+      val numParams = content[idx++].toInt() and 0xFF
+      Log.d(TAG, "Total parameters: $numParams")
       
-      Log.d(TAG, "Param 0x${paramId.toString(16)} (${paramLen}B): ${paramValue.toHexString()}")
+      // If numParams is 0, this might be a single-byte result code
+      if (numParams == 0 && content.size == 1) {
+        Log.w(TAG, "Single byte response (result code), no lock state")
+        return null
+      }
       
-      if (paramId == PARAM_LOCK_STATE && paramValue.isNotEmpty()) {
-        val stateValue = paramValue[0].toInt() and 0xFF
-        return when (stateValue) {
-          STATE_UNLOCKED_0x00, STATE_UNLOCKED_0x30 -> {
-            Log.i(TAG, "Lock state: UNLOCKED (0x${stateValue.toString(16)})")
-            false
-          }
-          STATE_LOCKED_0x01, STATE_LOCKED_0x31 -> {
-            Log.i(TAG, "Lock state: LOCKED (0x${stateValue.toString(16)})")
-            true
-          }
-          else -> {
-            Log.w(TAG, "Unknown lock state value: 0x${stateValue.toString(16)}")
-            null
+      // Parse parameters
+      var paramsParsed = 0
+      while (idx < content.size - 1 && paramsParsed < numParams) {
+        if (idx + 2 > content.size) {
+          Log.w(TAG, "Not enough data for parameter header at index $idx")
+          break
+        }
+        
+        val paramId = content[idx++].toInt() and 0xFF
+        val paramLen = content[idx++].toInt() and 0xFF
+        
+        // Validate parameter length
+        if (paramLen < 0 || paramLen > 255) {
+          Log.w(TAG, "Invalid parameter length: $paramLen")
+          break
+        }
+        
+        if (idx + paramLen > content.size) {
+          Log.w(TAG, "Parameter length $paramLen exceeds remaining content (${content.size - idx} bytes)")
+          break
+        }
+        
+        val paramValue = if (paramLen > 0) {
+          content.copyOfRange(idx, minOf(idx + paramLen, content.size))
+        } else {
+          byteArrayOf()
+        }
+        idx += paramLen
+        paramsParsed++
+        
+        Log.d(TAG, "Param 0x${paramId.toString(16)} (${paramLen}B): ${paramValue.toHexString()}")
+        
+        if (paramId == PARAM_LOCK_STATE && paramValue.isNotEmpty()) {
+          val stateValue = paramValue[0].toInt() and 0xFF
+          return when (stateValue) {
+            STATE_UNLOCKED_0x00, STATE_UNLOCKED_0x30 -> {
+              Log.i(TAG, "Lock state: UNLOCKED (0x${stateValue.toString(16)})")
+              false
+            }
+            STATE_LOCKED_0x01, STATE_LOCKED_0x31 -> {
+              Log.i(TAG, "Lock state: LOCKED (0x${stateValue.toString(16)})")
+              true
+            }
+            else -> {
+              Log.w(TAG, "Unknown lock state value: 0x${stateValue.toString(16)}")
+              null
+            }
           }
         }
       }
+      
+      Log.w(TAG, "Lock state parameter (0x30) not found after parsing $paramsParsed parameters")
+    } catch (e: Exception) {
+      Log.e(TAG, "Exception extracting lock state: ${e.message}", e)
     }
     
-    Log.w(TAG, "Lock state parameter (0x30) not found")
     return null
   }
   
-  /**
-   * Parse set parameter response - FROM WORKING DigitalLock.kt
-   */
   fun parseSetParameterResponse(content: ByteArray): SetParameterResult {
     if (content.isEmpty()) {
       Log.w(TAG, "Empty set response")
@@ -496,7 +417,6 @@ internal object GSeriesProtocol {
     
     Log.d(TAG, "Parsing set response: ${content.toHexString()}")
     
-    // Single byte response (result flag)
     if (content.size == 1) {
       val flag = content[0].toInt() and 0xFF
       return when (flag) {
@@ -527,7 +447,6 @@ internal object GSeriesProtocol {
       }
     }
     
-    // Multi-parameter response
     var idx = 0
     val numParams = content[idx++].toInt() and 0xFF
     var allSuccess = true
@@ -547,14 +466,7 @@ internal object GSeriesProtocol {
     return SetParameterResult(success = allSuccess, parameterResults = results)
   }
   
-  // =========================================================================
-  // HELPER METHODS - FROM WORKING POC
-  // =========================================================================
-  
-  /**
-   * Generate incremental serial number (6 bytes) - FROM WORKING POC
-   * Uses current timestamp in BCD format: [YY][MM][DD][HH][mm][SS]
-   */
+  // Helper methods remain the same
   private fun generateIncrementalSerialNumber(): ByteArray {
     val calendar = Calendar.getInstance()
     
@@ -588,19 +500,12 @@ internal object GSeriesProtocol {
     return result
   }
   
-  /**
-   * Generate random number (4 bytes)
-   */
   private fun generateRandomNumber(): ByteArray {
     return ByteArray(4).apply {
       java.util.Random().nextBytes(this)
     }
   }
   
-  /**
-   * Calculate CRC-16 CCITT - FROM WORKING POC
-   * Polynomial: 0x1021, Initial: 0xFFFF
-   */
   private fun calculateCRC16(data: ByteArray): Int {
     var crc = 0xFFFF
     val polynomial = 0x1021
@@ -619,10 +524,6 @@ internal object GSeriesProtocol {
     return crc and 0xFFFF
   }
   
-  /**
-   * Calculate SunCheck checksum - FROM WORKING POC
-   * Sum all bytes, negate, add 1, subtract 16 if > 0xF0
-   */
   private fun calculateSunCheck(data: ByteArray): Byte {
     var sum = 0
     for (b in data) {
@@ -639,11 +540,7 @@ internal object GSeriesProtocol {
     return checksum.toByte()
   }
   
-  /**
-   * Encrypt using AES-128 ECB with zero padding - FROM WORKING POC
-   */
   private fun encryptAES128ECB(plaintext: ByteArray, key: ByteArray): ByteArray {
-    // Ensure key is exactly 16 bytes
     val aesKey = if (key.size == 16) {
       key
     } else {
@@ -653,7 +550,6 @@ internal object GSeriesProtocol {
       }
     }
     
-    // Pad to 16-byte blocks with zeros
     val paddedLength = ((plaintext.size + 15) / 16) * 16
     val paddedPlaintext = ByteArray(paddedLength)
     System.arraycopy(plaintext, 0, paddedPlaintext, 0, plaintext.size)
@@ -668,10 +564,6 @@ internal object GSeriesProtocol {
   }
   
   private fun ByteArray.toHexString(): String = joinToString(" ") { "%02X".format(it) }
-  
-  // =========================================================================
-  // DATA CLASSES
-  // =========================================================================
   
   data class ParsedResponse(
     val command: Int,
