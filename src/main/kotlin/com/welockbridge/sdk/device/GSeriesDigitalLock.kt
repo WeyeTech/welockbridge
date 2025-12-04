@@ -9,6 +9,8 @@ import com.welockbridge.sdk.internal.BleConnectionManager
 import com.welockbridge.sdk.protocol.GSeriesProtocol
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.UUID
 
 /**
@@ -34,6 +36,8 @@ internal class GSeriesDigitalLock(
     private const val POLLING_INTERVAL_MS = 5000L
     private const val MAX_RETRY_ATTEMPTS = 3
     private const val STATE_DEBOUNCE_MS = 2000L
+    private const val MAX_CONSECUTIVE_FAILURES = 5
+    private const val COMMAND_DELAY_MS = 500L
   }
   
   override val deviceId: String = androidDevice.address
@@ -61,6 +65,7 @@ internal class GSeriesDigitalLock(
   
   private var batteryLevel = -1
   private var pollingJob: Job? = null
+  private var isPollingEnabled = false
   
   private var serviceUuid: UUID? = null
   private var writeUuid: UUID? = null
@@ -71,6 +76,10 @@ internal class GSeriesDigitalLock(
   
   // Retry mechanism
   private var consecutiveFailures = 0
+  
+  // Command synchronization to prevent serial number issues
+  private var lastCommandTime = 0L
+  private val commandMutex = Mutex()
   
   init {
     connectionManager.setOnConnectionStateChange { connected, error ->
@@ -94,24 +103,24 @@ internal class GSeriesDigitalLock(
   }
   
   override suspend fun connect(): Result<Unit> {
-    Log.d(TAG, "🔌 Connecting to $deviceId...")
+    Log.d(TAG, "Connecting to $deviceId...")
     _connectionState.value = ConnectionState.Connecting
     
     val connectResult = connectionManager.connect()
     if (connectResult.isFailure) {
-      Log.e(TAG, "❌ Connection failed: ${connectResult.exceptionOrNull()?.message}")
+      Log.e(TAG, "Connection failed: ${connectResult.exceptionOrNull()?.message}")
       _connectionState.value = ConnectionState.Error(
         connectResult.exceptionOrNull()?.message ?: "Connection failed"
       )
       return Result.failure(SdkException.ConnectionFailedException(connectResult.exceptionOrNull()))
     }
     
-    Log.d(TAG, "✅ GATT connected, getting characteristics...")
+    Log.d(TAG, "GATT connected, getting characteristics...")
     delay(1000)
     
     val charInfo = connectionManager.getCharacteristicInfo()
     if (charInfo == null) {
-      Log.e(TAG, "❌ No compatible characteristics found!")
+      Log.e(TAG, "No compatible characteristics found!")
       disconnect()
       return Result.failure(SdkException.ConnectionFailedException(
         Exception("No compatible characteristics found")
@@ -122,33 +131,33 @@ internal class GSeriesDigitalLock(
     writeUuid = charInfo.second
     notifyUuid = charInfo.third
     
-    Log.d(TAG, "📦 Service UUID: $serviceUuid")
-    Log.d(TAG, "✍️ Write UUID: $writeUuid")
-    Log.d(TAG, "📥 Notify UUID: $notifyUuid")
+    Log.d(TAG, "Service UUID: $serviceUuid")
+    Log.d(TAG, "Write UUID: $writeUuid")
+    Log.d(TAG, "Notify UUID: $notifyUuid")
     
-    Log.d(TAG, "🔔 Enabling notifications...")
+    Log.d(TAG, "Enabling notifications...")
     val notifyResult = connectionManager.enableNotifications(serviceUuid!!, notifyUuid!!)
     if (notifyResult.isFailure) {
-      Log.e(TAG, "❌ Failed to enable notifications: ${notifyResult.exceptionOrNull()?.message}")
+      Log.e(TAG, "Failed to enable notifications: ${notifyResult.exceptionOrNull()?.message}")
     } else {
-      Log.d(TAG, "✅ Notifications enabled")
+      Log.d(TAG, "Notifications enabled")
     }
     
     delay(500)
     
     // Query initial status with retry
-    Log.d(TAG, "🔍 Querying initial status...")
+    Log.d(TAG, "Querying initial status...")
     val statusResult = queryLockStatusWithRetry()
     if (statusResult.isFailure) {
-      Log.w(TAG, "⚠️ Initial status query failed, will retry via polling")
+      Log.w(TAG, "Initial status query failed, will retry via polling")
     } else {
-      Log.d(TAG, "✅ Initial status: ${statusResult.getOrNull()}")
+      Log.d(TAG, "Initial status: ${statusResult.getOrNull()}")
     }
     
     startPolling()
     
     _connectionState.value = ConnectionState.Connected
-    Log.d(TAG, "✅ Connection complete!")
+    Log.d(TAG, "Connection complete!")
     return Result.success(Unit)
   }
   
@@ -173,16 +182,16 @@ internal class GSeriesDigitalLock(
   }
   
   override suspend fun lock(): Result<Boolean> {
-    Log.d(TAG, "🔒 Locking device...")
+    Log.d(TAG, "Locking device...")
     
     if (!isConnected()) {
-      Log.e(TAG, "❌ Not connected!")
+      Log.e(TAG, "Not connected!")
       return Result.failure(SdkException.NotConnectedException())
     }
     
     val key = credentials.encryptionKey
     if (key == null) {
-      Log.e(TAG, "❌ Encryption key is required!")
+      Log.e(TAG, "Encryption key is required!")
       return Result.failure(SdkException.CommandFailedException(null))
     }
     
@@ -190,43 +199,43 @@ internal class GSeriesDigitalLock(
     lastCommandState = LockState.LOCKED
     
     val command = GSeriesProtocol.buildLockCommand(key)
-    Log.d(TAG, "📤 Lock command built: ${command.size} bytes")
+    Log.d(TAG, "Lock command built: ${command.size} bytes")
     
     val response = sendCommandAndWaitForResponse(command)
     
     return response.fold(
       onSuccess = { data ->
-        Log.d(TAG, "📥 Parsing lock response...")
+        Log.d(TAG, "Parsing lock response...")
         val parsed = GSeriesProtocol.parseResponse(data, key)
         
         // Handle error code 17 specifically - device may still lock
         if (parsed?.resultCode == 17) {
-          Log.w(TAG, "⚠️ Received error code 17, but device may have locked. Verifying...")
+          Log.w(TAG, "Received error code 17, but device may have locked. Verifying...")
           // Wait and verify actual state
           delay(1500)
           val verifyResult = queryLockStatusWithRetry()
           return if (verifyResult.isSuccess && verifyResult.getOrNull() == LockState.LOCKED) {
-            Log.i(TAG, "✅ Lock verified despite error code 17")
+            Log.i(TAG, "Lock verified despite error code 17")
             updateLockState(LockState.LOCKED)
             Result.success(true)
           } else {
-            Log.e(TAG, "❌ Lock failed - verification shows not locked")
+            Log.e(TAG, "Lock failed - verification shows not locked")
             Result.failure(SdkException.CommandFailedException(17))
           }
         }
         
         if (parsed?.isSuccess == true) {
-          Log.d(TAG, "✅ Lock successful!")
+          Log.d(TAG, "Lock successful!")
           updateLockState(LockState.LOCKED)
           Result.success(true)
         } else {
-          Log.e(TAG, "❌ Lock failed: resultCode=${parsed?.resultCode}")
+          Log.e(TAG, "Lock failed: resultCode=${parsed?.resultCode}")
           lastCommandState = null
           Result.failure(SdkException.CommandFailedException(parsed?.resultCode))
         }
       },
       onFailure = {
-        Log.e(TAG, "❌ Lock command failed: ${it.message}")
+        Log.e(TAG, "Lock command failed: ${it.message}")
         lastCommandState = null
         Result.failure(it)
       }
@@ -234,16 +243,16 @@ internal class GSeriesDigitalLock(
   }
   
   override suspend fun unlock(): Result<Boolean> {
-    Log.d(TAG, "🔓 Unlocking device...")
+    Log.d(TAG, "Unlocking device...")
     
     if (!isConnected()) {
-      Log.e(TAG, "❌ Not connected!")
+      Log.e(TAG, "Not connected!")
       return Result.failure(SdkException.NotConnectedException())
     }
     
     val key = credentials.encryptionKey
     if (key == null) {
-      Log.e(TAG, "❌ Encryption key is required!")
+      Log.e(TAG, "Encryption key is required!")
       return Result.failure(SdkException.CommandFailedException(null))
     }
     
@@ -251,43 +260,43 @@ internal class GSeriesDigitalLock(
     lastCommandState = LockState.UNLOCKED
     
     val command = GSeriesProtocol.buildUnlockCommand(key)
-    Log.d(TAG, "📤 Unlock command built: ${command.size} bytes")
+    Log.d(TAG, "Unlock command built: ${command.size} bytes")
     
     val response = sendCommandAndWaitForResponse(command)
     
     return response.fold(
       onSuccess = { data ->
-        Log.d(TAG, "📥 Parsing unlock response...")
+        Log.d(TAG, "Parsing unlock response...")
         val parsed = GSeriesProtocol.parseResponse(data, key)
         
         // Handle error code 17 specifically - device may still unlock
         if (parsed?.resultCode == 17) {
-          Log.w(TAG, "⚠️ Received error code 17, but device may have unlocked. Verifying...")
+          Log.w(TAG, "Received error code 17, but device may have unlocked. Verifying...")
           // Wait and verify actual state
           delay(1500)
           val verifyResult = queryLockStatusWithRetry()
           return if (verifyResult.isSuccess && verifyResult.getOrNull() == LockState.UNLOCKED) {
-            Log.i(TAG, "✅ Unlock verified despite error code 17")
+            Log.i(TAG, "Unlock verified despite error code 17")
             updateLockState(LockState.UNLOCKED)
             Result.success(true)
           } else {
-            Log.e(TAG, "❌ Unlock failed - verification shows still locked")
+            Log.e(TAG, "Unlock failed - verification shows still locked")
             Result.failure(SdkException.CommandFailedException(17))
           }
         }
         
         if (parsed?.isSuccess == true) {
-          Log.d(TAG, "✅ Unlock successful!")
+          Log.d(TAG, "Unlock successful!")
           updateLockState(LockState.UNLOCKED)
           Result.success(true)
         } else {
-          Log.e(TAG, "❌ Unlock failed: resultCode=${parsed?.resultCode}")
+          Log.e(TAG, "Unlock failed: resultCode=${parsed?.resultCode}")
           lastCommandState = null
           Result.failure(SdkException.CommandFailedException(parsed?.resultCode))
         }
       },
       onFailure = {
-        Log.e(TAG, "❌ Unlock command failed: ${it.message}")
+        Log.e(TAG, "Unlock command failed: ${it.message}")
         lastCommandState = null
         Result.failure(it)
       }
@@ -295,33 +304,33 @@ internal class GSeriesDigitalLock(
   }
   
   override suspend fun queryLockStatus(): Result<LockState> {
-    Log.d(TAG, "🔍 Querying lock status...")
+    Log.d(TAG, "Querying lock status...")
     
     if (!isConnected()) {
-      Log.e(TAG, "❌ Not connected!")
+      Log.e(TAG, "Not connected!")
       return Result.failure(SdkException.NotConnectedException())
     }
     
     val key = credentials.encryptionKey
     if (key == null) {
-      Log.e(TAG, "❌ Encryption key is required!")
+      Log.e(TAG, "Encryption key is required!")
       return Result.failure(SdkException.CommandFailedException(null))
     }
     
     val command = GSeriesProtocol.buildQueryStatusCommand(key)
-    Log.d(TAG, "📤 Query command built: ${command.size} bytes")
+    Log.d(TAG, "Query command built: ${command.size} bytes")
     
     val response = sendCommandAndWaitForResponse(command)
     
     return response.fold(
       onSuccess = { data ->
-        Log.d(TAG, "📥 Parsing query response...")
+        Log.d(TAG, "Parsing query response...")
         val parsed = GSeriesProtocol.parseResponse(data, key)
         if (parsed != null) {
           val isLocked = GSeriesProtocol.extractLockState(parsed.content)
           val battery = GSeriesProtocol.extractBatteryLevel(parsed.content)
           
-          Log.d(TAG, "📊 Parsed: isLocked=$isLocked, battery=$battery")
+          Log.d(TAG, "Parsed: isLocked=$isLocked, battery=$battery")
           
           if (battery != null) {
             batteryLevel = battery
@@ -331,10 +340,14 @@ internal class GSeriesDigitalLock(
             true -> LockState.LOCKED
             false -> LockState.UNLOCKED
             null -> {
-              // If we can't parse state but have a recent command, use expected state
-              if (lastCommandState != null &&
+              // If we can't parse state, use cached state instead of UNKNOWN
+              if (lastValidState != LockState.UNKNOWN &&
+                System.currentTimeMillis() - lastValidStateTime < 30000) { // 30 seconds
+                Log.d(TAG, "Using cached state from last valid parse: $lastValidState")
+                lastValidState
+              } else if (lastCommandState != null &&
                 System.currentTimeMillis() - lastValidStateTime < STATE_DEBOUNCE_MS) {
-                Log.d(TAG, "⚠️ Using expected state from recent command: $lastCommandState")
+                Log.d(TAG, "Using expected state from recent command: $lastCommandState")
                 lastCommandState!!
               } else {
                 LockState.UNKNOWN
@@ -342,12 +355,16 @@ internal class GSeriesDigitalLock(
             }
           }
           
-          updateLockState(state)
+          // Only update if not UNKNOWN, or if this is first state
+          if (state != LockState.UNKNOWN || lastValidState == LockState.UNKNOWN) {
+            updateLockState(state)
+          }
+          
           consecutiveFailures = 0
-          Log.d(TAG, "✅ Lock state: $state")
+          Log.d(TAG, "Lock state: $state")
           Result.success(state)
         } else {
-          Log.w(TAG, "⚠️ Could not parse response")
+          Log.w(TAG, "Could not parse response")
           consecutiveFailures++
           
           // Return cached state if we have one
@@ -360,7 +377,7 @@ internal class GSeriesDigitalLock(
         }
       },
       onFailure = {
-        Log.e(TAG, "❌ Query failed: ${it.message}")
+        Log.e(TAG, "Query failed: ${it.message}")
         consecutiveFailures++
         
         // Return cached state if we have one
@@ -434,50 +451,60 @@ internal class GSeriesDigitalLock(
   }
   
   private suspend fun sendCommandAndWaitForResponse(command: ByteArray): Result<ByteArray> {
-    val svcUuid = serviceUuid ?: return Result.failure(SdkException.NotConnectedException())
-    val wrtUuid = writeUuid ?: return Result.failure(SdkException.NotConnectedException())
-    
-    val hex = command.joinToString(" ") { String.format("%02X", it) }
-    Log.d(TAG, "")
-    Log.d(TAG, "╔═══════════════════════════════════════════════════════════╗")
-    Log.d(TAG, "║ 📤 SENDING COMMAND                                           ║")
-    Log.d(TAG, "╠═══════════════════════════════════════════════════════════╣")
-    Log.d(TAG, "║ Size: ${command.size} bytes")
-    Log.d(TAG, "║ Hex: $hex")
-    Log.d(TAG, "║ To: $wrtUuid")
-    Log.d(TAG, "╚═══════════════════════════════════════════════════════════╝")
-    Log.d(TAG, "")
-    
-    responseBuffer.clear()
-    pendingResponse = CompletableDeferred()
-    
-    val writeResult = connectionManager.writeData(svcUuid, wrtUuid, command)
-    if (writeResult.isFailure) {
-      Log.e(TAG, "❌ Write failed: ${writeResult.exceptionOrNull()?.message}")
-      pendingResponse = null
-      return Result.failure(writeResult.exceptionOrNull() ?: Exception("Write failed"))
-    }
-    
-    Log.d(TAG, "✅ Write successful, waiting for response...")
-    
-    return try {
-      withTimeout(RESPONSE_TIMEOUT_MS) {
-        val data = pendingResponse?.await()
-        pendingResponse = null
-        if (data != null) {
-          val respHex = data.joinToString(" ") { String.format("%02X", it) }
-          Log.d(TAG, "✅ Response received: ${data.size} bytes")
-          Log.d(TAG, "   Hex: $respHex")
-          Result.success(data)
-        } else {
-          Log.e(TAG, "❌ No response data")
-          Result.failure(SdkException.TimeoutException("response"))
-        }
+    return commandMutex.withLock {
+      // Ensure minimum delay between commands to prevent serial number issues
+      val timeSinceLastCommand = System.currentTimeMillis() - lastCommandTime
+      if (timeSinceLastCommand < COMMAND_DELAY_MS) {
+        delay(COMMAND_DELAY_MS - timeSinceLastCommand)
       }
-    } catch (e: Exception) {
-      pendingResponse = null
-      Log.e(TAG, "❌ Response timeout after ${RESPONSE_TIMEOUT_MS}ms")
-      Result.failure(SdkException.TimeoutException("response"))
+      
+      val svcUuid = serviceUuid ?: return@withLock Result.failure(SdkException.NotConnectedException())
+      val wrtUuid = writeUuid ?: return@withLock Result.failure(SdkException.NotConnectedException())
+      
+      val hex = command.joinToString(" ") { String.format("%02X", it) }
+      Log.d(TAG, "")
+      Log.d(TAG, "===============================================")
+      Log.d(TAG, "SENDING COMMAND")
+      Log.d(TAG, "===============================================")
+      Log.d(TAG, "Size: ${command.size} bytes")
+      Log.d(TAG, "Hex: $hex")
+      Log.d(TAG, "To: $wrtUuid")
+      Log.d(TAG, "===============================================")
+      Log.d(TAG, "")
+      
+      responseBuffer.clear()
+      pendingResponse = CompletableDeferred()
+      
+      val writeResult = connectionManager.writeData(svcUuid, wrtUuid, command)
+      lastCommandTime = System.currentTimeMillis()
+      
+      if (writeResult.isFailure) {
+        Log.e(TAG, "Write failed: ${writeResult.exceptionOrNull()?.message}")
+        pendingResponse = null
+        return@withLock Result.failure(writeResult.exceptionOrNull() ?: Exception("Write failed"))
+      }
+      
+      Log.d(TAG, "Write successful, waiting for response...")
+      
+      try {
+        withTimeout(RESPONSE_TIMEOUT_MS) {
+          val data = pendingResponse?.await()
+          pendingResponse = null
+          if (data != null) {
+            val respHex = data.joinToString(" ") { String.format("%02X", it) }
+            Log.d(TAG, "Response received: ${data.size} bytes")
+            Log.d(TAG, "Hex: $respHex")
+            Result.success(data)
+          } else {
+            Log.e(TAG, "No response data")
+            Result.failure(SdkException.TimeoutException("response"))
+          }
+        }
+      } catch (e: Exception) {
+        pendingResponse = null
+        Log.e(TAG, "Response timeout after ${RESPONSE_TIMEOUT_MS}ms")
+        Result.failure(SdkException.TimeoutException("response"))
+      }
     }
   }
   
@@ -485,20 +512,20 @@ internal class GSeriesDigitalLock(
     val hex = data.joinToString(" ") { String.format("%02X", it) }
     Log.d(TAG, "")
     Log.d(TAG, "RAW DATA RECEIVED")
-    Log.d(TAG, "  Size: ${data.size} bytes")
-    Log.d(TAG, "  Hex: $hex")
+    Log.d(TAG, "Size: ${data.size} bytes")
+    Log.d(TAG, "Hex: $hex")
     
     responseBuffer.addAll(data.toList())
     
     val bufferArray = responseBuffer.toByteArray()
-    Log.d(TAG, "  Buffer: ${bufferArray.size} bytes total")
+    Log.d(TAG, "Buffer: ${bufferArray.size} bytes total")
     
     val completeFrame = tryExtractCompleteFrame()
     
     if (completeFrame != null) {
       val frameHex = completeFrame.joinToString(" ") { String.format("%02X", it) }
-      Log.d(TAG, "  ✅ Complete frame: ${completeFrame.size} bytes")
-      Log.d(TAG, "  Frame hex: $frameHex")
+      Log.d(TAG, "Complete frame: ${completeFrame.size} bytes")
+      Log.d(TAG, "Frame hex: $frameHex")
       pendingResponse?.complete(completeFrame)
     }
   }
@@ -513,7 +540,7 @@ internal class GSeriesDigitalLock(
       buffer[0] == 0x20.toByte() &&
       buffer[1] == 0xF1.toByte()
     ) {
-      Log.d(TAG, "  ACK response detected!")
+      Log.d(TAG, "ACK response detected!")
       val frame = buffer.copyOfRange(0, 3)
       responseBuffer.clear()
       if (buffer.size > 3) {
@@ -534,7 +561,7 @@ internal class GSeriesDigitalLock(
     }
     
     if (startIndex < 0) {
-      Log.d(TAG, "  No F3 3F header found")
+      Log.d(TAG, "No F3 3F header found")
       return null
     }
     
@@ -547,12 +574,12 @@ internal class GSeriesDigitalLock(
     }
     
     if (endIndex < 0) {
-      Log.d(TAG, "  No F4 4F tail found yet, waiting for more data")
+      Log.d(TAG, "No F4 4F tail found yet, waiting for more data")
       return null
     }
     
     val frame = buffer.copyOfRange(startIndex, endIndex)
-    Log.d(TAG, "  Frame extracted: ${frame.size} bytes (start=$startIndex, end=$endIndex)")
+    Log.d(TAG, "Frame extracted: ${frame.size} bytes (start=$startIndex, end=$endIndex)")
     
     responseBuffer.clear()
     if (endIndex < buffer.size) {
@@ -563,20 +590,43 @@ internal class GSeriesDigitalLock(
   }
   
   private fun startPolling() {
+    if (isPollingEnabled) {
+      Log.d(TAG, "Polling already started")
+      return
+    }
+    
+    isPollingEnabled = true
     pollingJob?.cancel()
     pollingJob = scope.launch {
-      while (isActive && isConnected()) {
+      Log.d(TAG, "Starting automatic status polling")
+      while (isActive && isConnected() && isPollingEnabled) {
         delay(POLLING_INTERVAL_MS)
+        
+        // Stop polling if too many consecutive failures
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+          Log.w(TAG, "Stopping polling due to excessive failures ($consecutiveFailures)")
+          break
+        }
+        
         try {
-          queryLockStatusWithRetry(maxAttempts = 2)
+          val result = queryLockStatusWithRetry(maxAttempts = 2)
+          if (result.isSuccess) {
+            val state = result.getOrNull()
+            Log.d(TAG, "Polling result: $state")
+            // State is already updated in queryLockStatus, no need to do anything here
+          }
         } catch (e: Exception) {
           Log.w(TAG, "Polling error: ${e.message}")
         }
       }
+      Log.d(TAG, "Polling stopped")
+      isPollingEnabled = false
     }
   }
   
   private fun stopPolling() {
+    Log.d(TAG, "Stopping polling...")
+    isPollingEnabled = false
     pollingJob?.cancel()
     pollingJob = null
   }

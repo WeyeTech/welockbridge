@@ -147,7 +147,7 @@ class ExampleActivity : AppCompatActivity() {
       
       // Or use custom credentials:
       // val key = "YOUR_16_BYTE_KEY!".toByteArray()
-      // val credentials = DeviceCredentials.withKeyAndPassword(key, "12341234").getOrThrow()
+      // val credentials = DeviceCredentials.withKeyAndPassword(key, "YOUR_8_BYTE_KEY").getOrThrow()
       
       val result = sdk.connectToDevice(scannedDevice, credentials)
       

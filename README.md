@@ -69,7 +69,7 @@ sdk.startScan(
 val encryptionKey = "YOUR_16_BYTE_KEY!".toByteArray(Charsets.US_ASCII)
 val credentials = DeviceCredentials.withKeyAndPassword(
     key = encryptionKey,
-    password = "12341234"
+    password = "YOUR_8_BYTE_KEY"
 ).getOrThrow()
 
 // Connect
