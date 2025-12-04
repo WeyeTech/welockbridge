@@ -208,19 +208,19 @@ internal class GSeriesDigitalLock(
         Log.d(TAG, "Parsing lock response...")
         val parsed = GSeriesProtocol.parseResponse(data, key)
         
-        // Handle error code 17 specifically - device may still lock
-        if (parsed?.resultCode == 17) {
-          Log.w(TAG, "Received error code 17, but device may have locked. Verifying...")
-          // Wait and verify actual state
-          delay(1500)
+        // Handle error codes 1 and 17 - device may still lock despite error
+        if (parsed?.resultCode == 1 || parsed?.resultCode == 17) {
+          Log.w(TAG, "Received error code ${parsed.resultCode}, but device may have locked. Verifying...")
+          // Wait and verify actual state (device needs time to process)
+          delay(2000)
           val verifyResult = queryLockStatusWithRetry()
           return if (verifyResult.isSuccess && verifyResult.getOrNull() == LockState.LOCKED) {
-            Log.i(TAG, "Lock verified despite error code 17")
+            Log.i(TAG, "Lock verified despite error code ${parsed.resultCode}")
             updateLockState(LockState.LOCKED)
             Result.success(true)
           } else {
             Log.e(TAG, "Lock failed - verification shows not locked")
-            Result.failure(SdkException.CommandFailedException(17))
+            Result.failure(SdkException.CommandFailedException(parsed.resultCode))
           }
         }
         
@@ -269,19 +269,19 @@ internal class GSeriesDigitalLock(
         Log.d(TAG, "Parsing unlock response...")
         val parsed = GSeriesProtocol.parseResponse(data, key)
         
-        // Handle error code 17 specifically - device may still unlock
-        if (parsed?.resultCode == 17) {
-          Log.w(TAG, "Received error code 17, but device may have unlocked. Verifying...")
-          // Wait and verify actual state
-          delay(1500)
+        // Handle error codes 1 and 17 - device may still unlock despite error
+        if (parsed?.resultCode == 1 || parsed?.resultCode == 17) {
+          Log.w(TAG, "Received error code ${parsed.resultCode}, but device may have unlocked. Verifying...")
+          // Wait and verify actual state (device needs time to process)
+          delay(2000)
           val verifyResult = queryLockStatusWithRetry()
           return if (verifyResult.isSuccess && verifyResult.getOrNull() == LockState.UNLOCKED) {
-            Log.i(TAG, "Unlock verified despite error code 17")
+            Log.i(TAG, "Unlock verified despite error code ${parsed.resultCode}")
             updateLockState(LockState.UNLOCKED)
             Result.success(true)
           } else {
             Log.e(TAG, "Unlock failed - verification shows still locked")
-            Result.failure(SdkException.CommandFailedException(17))
+            Result.failure(SdkException.CommandFailedException(parsed.resultCode))
           }
         }
         
