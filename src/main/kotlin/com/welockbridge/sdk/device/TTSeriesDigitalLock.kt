@@ -35,7 +35,7 @@ import java.util.UUID
  * @version 1.0.0
  */
 @SuppressLint("MissingPermission")
-internal class TTSeriesDigitalLock(
+class TTSeriesDigitalLock(
     private val context: Context,
     private val androidDevice: AndroidBluetoothDevice,
     private val credentials: DeviceCredentials,

@@ -24,7 +24,7 @@ import java.util.UUID
  * 5. Add debouncing to prevent rapid state changes
  */
 @SuppressLint("MissingPermission")
-internal class GSeriesDigitalLock(
+class GSeriesDigitalLock(
   private val context: Context,
   private val androidDevice: AndroidBluetoothDevice,
   private val credentials: DeviceCredentials
