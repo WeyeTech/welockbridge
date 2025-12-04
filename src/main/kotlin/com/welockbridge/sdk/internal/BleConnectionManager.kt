@@ -30,6 +30,7 @@ import java.util.UUID
  *
  * This class is internal to the SDK and should not be accessed directly by clients.
  */
+@Suppress("MissingPermission")
 internal class BleConnectionManager(
   private val context: Context,
   private val device: AndroidBluetoothDevice
@@ -68,7 +69,7 @@ internal class BleConnectionManager(
       Log.d(TAG, "Connection state changed: status=$status, newState=$newState")
       when (newState) {
         BluetoothProfile.STATE_CONNECTED -> {
-          Log.d(TAG, " Connected to GATT server")
+          Log.d(TAG, "Connected to GATT server")
           bluetoothGatt = gatt
           // Small delay before service discovery
           android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
@@ -105,7 +106,7 @@ internal class BleConnectionManager(
         Log.d(TAG, "Write completed successfully to ${characteristic?.uuid}")
         Result.success(Unit)
       } else {
-        Log.e(TAG, "Write failed with status: $status")
+        Log.e(TAG, " Write failed with status: $status")
         Result.failure(Exception("Write failed with status: $status"))
       }
       writeCompletionDeferred?.complete(result)
@@ -120,7 +121,7 @@ internal class BleConnectionManager(
         Log.d(TAG, "Descriptor write completed - notifications enabled")
         Result.success(Unit)
       } else {
-        Log.e(TAG, " Descriptor write failed with status: $status")
+        Log.e(TAG, "Descriptor write failed with status: $status")
         Result.failure(Exception("Descriptor write failed: $status"))
       }
       descriptorWriteDeferred?.complete(result)
@@ -131,7 +132,7 @@ internal class BleConnectionManager(
       characteristic: BluetoothGattCharacteristic,
       value: ByteArray
     ) {
-      Log.d(TAG, " Received (API 33+): ${value.size} bytes - ${value.toHexString()}")
+      Log.d(TAG, "Received (API 33+): ${value.size} bytes - ${value.toHexString()}")
       _dataReceived.tryEmit(value)
     }
     
@@ -141,7 +142,7 @@ internal class BleConnectionManager(
       characteristic: BluetoothGattCharacteristic?
     ) {
       characteristic?.value?.let { value ->
-        Log.d(TAG, " Received (Legacy): ${value.size} bytes - ${value.toHexString()}")
+        Log.d(TAG, "Received (Legacy): ${value.size} bytes - ${value.toHexString()}")
         _dataReceived.tryEmit(value)
       }
     }
@@ -179,7 +180,7 @@ internal class BleConnectionManager(
     gatt ?: return
     
     Log.d(TAG, "")
-    Log.d(TAG, " AUTO-DISCOVERING CHARACTERISTICS (LIKE NRF CONNECT)")
+    Log.d(TAG, "AUTO-DISCOVERING CHARACTERISTICS (LIKE NRF CONNECT)")
     Log.d(TAG, "   No hardcoded UUIDs - finding dynamically...")
     Log.d(TAG, "")
     
@@ -191,6 +192,14 @@ internal class BleConnectionManager(
       "0000180f", // Battery Service
       "00001805", // Current Time
       "00001802"  // Immediate Alert
+    )
+    
+    // DFU (Device Firmware Update) services to skip - NOT for data!
+    val dfuServicePrefixes = listOf(
+      "8e400001", // Nordic Buttonless DFU
+      "0000fe59", // Nordic Secure DFU
+      "00001530", // Nordic Legacy DFU
+      "8ec90001"  // Another DFU variant
     )
     
     // Find ALL services with both WRITE and NOTIFY characteristics
@@ -209,11 +218,18 @@ internal class BleConnectionManager(
       // Skip standard BLE services
       val isStandard = standardServicePrefixes.any { svcUuid.startsWith(it) }
       if (isStandard) {
-        Log.d(TAG, "Skip standard: ${service.uuid}")
+        Log.d(TAG, " Skip standard: ${service.uuid}")
         continue
       }
       
-      Log.d(TAG, "Service: ${service.uuid}")
+      // Skip DFU services - they're for firmware updates, not data!
+      val isDfu = dfuServicePrefixes.any { svcUuid.startsWith(it) }
+      if (isDfu) {
+        Log.d(TAG, "Skip DFU service: ${service.uuid}")
+        continue
+      }
+      
+      Log.d(TAG, " Service: ${service.uuid}")
       
       var writeChar: BluetoothGattCharacteristic? = null
       var notifyChar: BluetoothGattCharacteristic? = null
@@ -262,6 +278,12 @@ internal class BleConnectionManager(
           score += 20
         }
         
+        // BIG bonus for Nordic UART Service (NUS) - most common data service
+        if (svcUuid.startsWith("6e400001")) {
+          score += 100
+          Log.d(TAG, "Nordic UART Service detected! +100 score")
+        }
+        
         candidates.add(ServiceCandidate(service, writeChar, notifyChar, score))
         Log.d(TAG, "CANDIDATE score=$score")
       }
@@ -280,7 +302,7 @@ internal class BleConnectionManager(
       
       Log.d(TAG, "")
       Log.d(TAG, "╔══════════════════════════════════════════════════════╗")
-      Log.d(TAG, "║ AUTO-DISCOVERED (NO HARDCODING)                   ║")
+      Log.d(TAG, "║AUTO-DISCOVERED (NO HARDCODING)                   ║")
       Log.d(TAG, "╠══════════════════════════════════════════════════════╣")
       Log.d(TAG, "║ Service: ${best.service.uuid}")
       Log.d(TAG, "║ RX (Write): ${best.writeChar.uuid}")
@@ -461,7 +483,7 @@ internal class BleConnectionManager(
     val characteristic = service.getCharacteristic(characteristicUuid)
       ?: return Result.failure(Exception("Characteristic not found"))
     
-    Log.d(TAG, " Enabling notifications for $characteristicUuid")
+    Log.d(TAG, "📝 Enabling notifications for $characteristicUuid")
     
     // Enable local notification
     val success = gatt.setCharacteristicNotification(characteristic, true)
@@ -478,7 +500,7 @@ internal class BleConnectionManager(
       return Result.success(Unit)
     }
     
-    Log.d(TAG, " Writing to CCCD descriptor...")
+    Log.d(TAG, "Writing to CCCD descriptor...")
     descriptorWriteDeferred = CompletableDeferred()
     
     val writeSuccess = try {
@@ -499,7 +521,7 @@ internal class BleConnectionManager(
     
     if (!writeSuccess) {
       descriptorWriteDeferred = null
-      Log.e(TAG, "Descriptor write initiation failed")
+      Log.e(TAG, " Descriptor write initiation failed")
       return Result.failure(Exception("Descriptor write failed"))
     }
     
@@ -509,7 +531,7 @@ internal class BleConnectionManager(
         descriptorWriteDeferred?.await() ?: Result.failure(Exception("Descriptor write cancelled"))
       }
     } catch (e: Exception) {
-      Log.e(TAG, "Descriptor write timeout")
+      Log.e(TAG, " Descriptor write timeout")
       descriptorWriteDeferred = null
       Result.failure(Exception("Descriptor write timeout"))
     }
