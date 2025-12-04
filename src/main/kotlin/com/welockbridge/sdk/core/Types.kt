@@ -210,8 +210,8 @@ data class DeviceCredentials private constructor(
      */
     fun withDefaultKey(): DeviceCredentials {
       return DeviceCredentials(
-        encryptionKey = "8564535435463543".toByteArray(Charsets.US_ASCII),
-        password = "746534346",
+        encryptionKey = "1234567890123456".toByteArray(Charsets.US_ASCII),
+        password = "12341234",
         timestamp = System.currentTimeMillis()
       )
     }

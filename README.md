@@ -69,7 +69,7 @@ sdk.startScan(
 val encryptionKey = "YOUR_16_BYTE_KEY!".toByteArray(Charsets.US_ASCII)
 val credentials = DeviceCredentials.withKeyAndPassword(
     key = encryptionKey,
-    password = "YOUR_8_BYTE_KEY"
+    password = "12341234"
 ).getOrThrow()
 
 // Connect
@@ -389,4 +389,4 @@ Copyright © 2024 WeLockBridge. All rights reserved.
 
 ## Support
 
-For technical support, contact: mrityunjay.patel@wheelseye.com 
+For technical support, contact: support@welockbridge.com

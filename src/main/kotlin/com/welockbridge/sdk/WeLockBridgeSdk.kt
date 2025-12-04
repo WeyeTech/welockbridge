@@ -51,7 +51,7 @@ class WeLockBridgeSdk private constructor(
   
   companion object {
     private const val TAG = "WeLockBridgeSdk"
-    const val VERSION = "1.1.0"
+    const val VERSION = "1.2.3"
     const val SDK_NAME = "WeLockBridge BLE SDK"
     
     @Volatile
