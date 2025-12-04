@@ -389,4 +389,4 @@ Copyright © 2024 WeLockBridge. All rights reserved.
 
 ## Support
 
-For technical support, contact: support@welockbridge.com
+For technical support, contact: mrityunjay.patel@wheelseye.com 
